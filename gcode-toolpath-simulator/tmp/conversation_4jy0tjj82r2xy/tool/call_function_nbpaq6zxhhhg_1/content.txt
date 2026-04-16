@@ -1,0 +1,1686 @@
+批量文件生成完成！成功 8/8 个文件。
+
+## 生成成功的文件
+
+<file_content path='client/src/lib/gcode-parser.ts'>
+/**
+ * G-code Parser - 解析 CNC G-code 文件并提取刀路轨迹数据
+ */
+
+export interface Point3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface ToolpathSegment {
+  type: 'rapid' | 'feed' | 'arc';
+  start: Point3D;
+  end: Point3D;
+  feedRate?: number;
+  arc?: {
+    center: Point3D;
+    clockwise: boolean;
+    plane: 'XY' | 'XZ' | 'YZ';
+  };
+  lineNumber?: number;
+}
+
+export interface GcodeParseResult {
+  segments: ToolpathSegment[];
+  bounds: {
+    min: Point3D;
+    max: Point3D;
+  };
+  stats: {
+    totalLines: number;
+    totalSegments: number;
+    rapidMoves: number;
+    feedMoves: number;
+    arcMoves: number;
+    estimatedLength: number;
+    minFeedRate: number;
+    maxFeedRate: number;
+  };
+  metadata: {
+    filename?: string;
+    parsedAt: string;
+    hasArcs: boolean;
+  };
+}
+
+interface ParserState {
+  currentPos: Point3D;
+  absoluteMode: boolean;
+  units: 'mm' | 'inch';
+  lastFeedRate: number;
+}
+
+/**
+ * 解析一行 G-code 指令
+ */
+function parseLine(line: string, state: ParserState): {
+  command?: string;
+  params?: Record<string, number>;
+  raw?: string;
+} {
+  const trimmed = line.trim();
+  
+  // 跳过空行和注释
+  if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('(')) {
+    return { raw: trimmed };
+  }
+  
+  // 移除注释
+  const cleanLine = trimmed.split(';')[0].split('(')[0].trim();
+  if (!cleanLine) {
+    return { raw: trimmed };
+  }
+  
+  // 解析 G-code 指令
+  const tokens = cleanLine.split(/\s+/).filter(t => t.length > 0);
+  const command = tokens[0].toUpperCase();
+  const params: Record<string, number> = {};
+  
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length > 1) {
+      const key = token[0].toUpperCase();
+      const value = parseFloat(token.substring(1));
+      if (!isNaN(value)) {
+        params[key] = value;
+      }
+    }
+  }
+  
+  return { command, params };
+}
+
+/**
+ * 解析 G-code 文件
+ */
+export function parseGcode(content: string, filename?: string): GcodeParseResult {
+  const lines = content.split('\n');
+  const segments: ToolpathSegment[] = [];
+  
+  const state: ParserState = {
+    currentPos: { x: 0, y: 0, z: 0 },
+    absoluteMode: true,
+    units: 'mm',
+    lastFeedRate: 0,
+  };
+  
+  let rapidMoves = 0;
+  let feedMoves = 0;
+  let arcMoves = 0;
+  let hasArcs = false;
+  
+  const bounds = {
+    min: { x: Infinity, y: Infinity, z: Infinity },
+    max: { x: -Infinity, y: -Infinity, z: -Infinity },
+  };
+  
+  function updateBounds(pos: Point3D) {
+    bounds.min.x = Math.min(bounds.min.x, pos.x);
+    bounds.min.y = Math.min(bounds.min.y, pos.y);
+    bounds.min.z = Math.min(bounds.min.z, pos.z);
+    bounds.max.x = Math.max(bounds.max.x, pos.x);
+    bounds.max.y = Math.max(bounds.max.y, pos.y);
+    bounds.max.z = Math.max(bounds.max.z, pos.z);
+  }
+  
+  function getPosition(params: Record<string, number>): Point3D {
+    if (state.absoluteMode) {
+      return {
+        x: params.X ?? state.currentPos.x,
+        y: params.Y ?? state.currentPos.y,
+        z: params.Z ?? state.currentPos.z,
+      };
+    } else {
+      return {
+        x: state.currentPos.x + (params.X ?? 0),
+        y: state.currentPos.y + (params.Y ?? 0),
+        z: state.currentPos.z + (params.Z ?? 0),
+      };
+    }
+  }
+  
+  function addSegment(segment: ToolpathSegment) {
+    segments.push(segment);
+    updateBounds(segment.start);
+    updateBounds(segment.end);
+  }
+  
+  for (let i = 0; i < lines.length; i++) {
+    const lineNumber = i + 1;
+    const parsed = parseLine(lines[i], state);
+    
+    if (parsed.raw !== undefined) continue;
+    if (!parsed.command) continue;
+    
+    const { command, params = {} } = parsed;
+    
+    // 处理 G90 (绝对坐标) 和 G91 (相对坐标)
+    if (command === 'G90') {
+      state.absoluteMode = true;
+      continue;
+    }
+    if (command === 'G91') {
+      state.absoluteMode = false;
+      continue;
+    }
+    
+    // 处理 G20 (英寸) 和 G21 (毫米)
+    if (command === 'G20') {
+      state.units = 'inch';
+      continue;
+    }
+    if (command === 'G21') {
+      state.units = 'mm';
+      continue;
+    }
+    
+    // 处理 G00 (快速定位)
+    if (command === 'G00' || command === 'G0') {
+      const newPos = getPosition(params);
+      addSegment({
+        type: 'rapid',
+        start: { ...state.currentPos },
+        end: newPos,
+        lineNumber,
+      });
+      state.currentPos = newPos;
+      rapidMoves++;
+      continue;
+    }
+    
+    // 处理 G01 (直线进给)
+    if (command === 'G01' || command === 'G1') {
+      const newPos = getPosition(params);
+      if (params.F !== undefined) {
+        state.lastFeedRate = params.F;
+      }
+      addSegment({
+        type: 'feed',
+        start: { ...state.currentPos },
+        end: newPos,
+        feedRate: state.lastFeedRate,
+        lineNumber,
+      });
+      state.currentPos = newPos;
+      feedMoves++;
+      continue;
+    }
+    
+    // 处理 G02/G03 (圆弧)
+    if (command === 'G02' || command === 'G03' || command === 'G2' || command === 'G3') {
+      hasArcs = true;
+      const clockwise = command === 'G02' || command === 'G2';
+      const newPos = getPosition(params);
+      
+      // 计算圆弧中心点
+      let center: Point3D;
+      if (params.I !== undefined || params.J !== undefined || params.K !== undefined) {
+        center = {
+          x: state.currentPos.x + (params.I ?? 0),
+          y: state.currentPos.y + (params.J ?? 0),
+          z: state.currentPos.z + (params.K ?? 0),
+        };
+      } else {
+        // R 模式：计算圆弧中心
+        const r = params.R ?? 0;
+        const midX = (state.currentPos.x + newPos.x) / 2;
+        const midY = (state.currentPos.y + newPos.y) / 2;
+        const dx = newPos.x - state.currentPos.x;
+        const dy = newPos.y - state.currentPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist > 0 && r > 0) {
+          const offset = Math.sqrt(r * r - (dist / 2) * (dist / 2));
+          center = {
+            x: midX - (dy / dist) * offset * (clockwise ? 1 : -1),
+            y: midY + (dx / dist) * offset * (clockwise ? 1 : -1),
+            z: state.currentPos.z,
+          };
+        } else {
+          center = { ...state.currentPos };
+        }
+      }
+      
+      if (params.F !== undefined) {
+        state.lastFeedRate = params.F;
+      }
+      
+      // 确定圆弧平面
+      const plane: 'XY' | 'XZ' | 'YZ' = params.X !== undefined && params.Y !== undefined ? 'XY' :
+                                        params.X !== undefined && params.Z !== undefined ? 'XZ' : 'XY';
+      
+      addSegment({
+        type: 'arc',
+        start: { ...state.currentPos },
+        end: newPos,
+        feedRate: state.lastFeedRate,
+        arc: {
+          center,
+          clockwise,
+          plane,
+        },
+        lineNumber,
+      });
+      state.currentPos = newPos;
+      arcMoves++;
+      continue;
+    }
+    
+    // 处理 M02/M30 (程序结束)
+    if (command === 'M02' || command === 'M30') {
+      continue;
+    }
+  }
+  
+  // 如果没有有效的边界数据，设置默认值
+  if (bounds.min.x === Infinity) {
+    bounds.min = { x: 0, y: 0, z: 0 };
+    bounds.max = { x: 100, y: 100, z: 100 };
+  }
+  
+  // 计算总长度
+  let totalLength = 0;
+  for (const seg of segments) {
+    if (seg.type === 'rapid' || seg.type === 'feed') {
+      const dx = seg.end.x - seg.start.x;
+      const dy = seg.end.y - seg.start.y;
+      const dz = seg.end.z - seg.start.z;
+      totalLength += Math.sqrt(dx * dx + dy * dy + dz * dz);
+    } else if (seg.type === 'arc' && seg.arc) {
+      // 简化：使用弦长估算圆弧长度
+      const dx = seg.end.x - seg.start.x;
+      const dy = seg.end.y - seg.start.y;
+      const dz = seg.end.z - seg.start.z;
+      totalLength += Math.sqrt(dx * dx + dy * dy + dz * dz) * 1.5;
+    }
+  }
+  
+  // 收集进给速率
+  const feedRates = segments
+    .filter(s => s.feedRate && s.feedRate > 0)
+    .map(s => s.feedRate!);
+  
+  return {
+    segments,
+    bounds,
+    stats: {
+      totalLines: lines.length,
+      totalSegments: segments.length,
+      rapidMoves,
+      feedMoves,
+      arcMoves,
+      estimatedLength: Math.round(totalLength * 100) / 100,
+      minFeedRate: feedRates.length > 0 ? Math.min(...feedRates) : 0,
+      maxFeedRate: feedRates.length > 0 ? Math.max(...feedRates) : 0,
+    },
+    metadata: {
+      filename,
+      parsedAt: new Date().toISOString(),
+      hasArcs,
+    },
+  };
+}
+
+/**
+ * 生成示例 G-code 数据（用于演示）
+ */
+export function generateSampleGcode(): string {
+  return `G21 ; 设置为毫米单位
+G90 ; 绝对坐标
+G00 Z5.0 ; 快速移动到安全高度
+G00 X0 Y0 ; 移动到原点
+G01 Z-1.0 F100 ; 下降到切削深度
+G01 X10 Y0 F200 ; 直线切削
+G01 X10 Y10 ; 直线切削
+G01 X0 Y10 ; 直线切削
+G01 X0 Y0 ; 回到起点
+G00 Z5.0 ; 抬刀到安全高度
+G00 X20 Y0 ; 移动到下一个位置
+G01 Z-2.0 F100 ; 下降到切削深度
+G02 X30 Y10 I5 J0 F200 ; 顺时针圆弧
+G01 X30 Y20 ; 直线切削
+G03 X40 Y10 I0 J-5 F200 ; 逆时针圆弧
+G01 X40 Y0 ; 直线切削
+G00 Z50 ; 抬刀到安全高度
+M30 ; 程序结束`;
+}
+
+</file_content>
+
+<file_content path='client/src/pages/SimulatorPage/components/FileUploader.tsx'>
+import { useCallback, useState } from "react";
+import { Upload, FileCode, X, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface FileUploaderProps {
+  onFileSelect: (file: File) => void;
+  accept?: string;
+  className?: string;
+}
+
+export function FileUploader({
+  onFileSelect,
+  accept = ".gcode,.nc,.ngc,.tap",
+  className,
+}: FileUploaderProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const processFile = useCallback(
+    async (file: File) => {
+      setIsLoading(true);
+      setSelectedFile(file);
+      
+      // 模拟加载延迟，实际解析在父组件处理
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      
+      onFileSelect(file);
+      setIsLoading(false);
+    },
+    [onFileSelect]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.name.match(/\.(gcode|nc|ngc|tap)$/i)) {
+          processFile(file);
+        }
+      }
+    },
+    [processFile]
+  );
+
+  const handleFileInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (files && files.length > 0) {
+        processFile(files[0]);
+      }
+    },
+    [processFile]
+  );
+
+  const handleClear = useCallback(() => {
+    setSelectedFile(null);
+  }, []);
+
+  return (
+    <div
+      className={cn(
+        "relative rounded-2xl border-2 border-dashed transition-all duration-300",
+        isDragging
+          ? "border-primary bg-primary/5 scale-[1.02]"
+          : "border-border hover:border-primary/50 hover:bg-muted/30",
+        className
+      )}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <input
+        type="file"
+        accept={accept}
+        onChange={handleFileInput}
+        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+      />
+
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        {isLoading ? (
+          <>
+            <Loader2 className="w-12 h-12 mb-4 text-primary animate-spin" />
+            <p className="text-sm text-muted-foreground">处理中...</p>
+          </>
+        ) : selectedFile ? (
+          <>
+            <FileCode className="w-12 h-12 mb-4 text-primary" />
+            <p className="text-sm font-medium truncate max-w-[200px]">
+              {selectedFile.name}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {(selectedFile.size / 1024).toFixed(1)} KB
+            </p>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClear();
+              }}
+              className="mt-3 flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <X className="w-3 h-3" />
+              移除
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <Upload className="w-8 h-8 text-primary" />
+            </div>
+            <p className="text-sm font-medium">
+              拖拽 G-code 文件到这里
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              或点击选择文件 · 支持 .gcode .nc .ngc .tap
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/SimulatorPage/components/Viewer3D.tsx'>
+import { useEffect, useRef, useState, useCallback } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { Button } from "@/components/ui/button";
+import { RotateCcw, ZoomIn, ZoomOut, Maximize2, Grid3X3 } from "lucide-react";
+
+export interface ToolpathData {
+  movements: Array<{
+    x: number;
+    y: number;
+    z: number;
+    type: "rapid" | "feed" | "arc" | "helical";
+    start?: { x: number; y: number; z: number };
+    end?: { x: number; y: number; z: number };
+    center?: { x: number; y: number; z: number };
+    radius?: number;
+    angle?: number;
+  }>;
+  bounds: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  };
+  stats: {
+    totalLines: number;
+    totalRapid: number;
+    totalFeed: number;
+    totalArc: number;
+    totalDistance: number;
+  };
+}
+
+interface Viewer3DProps {
+  toolpathData: ToolpathData | null;
+}
+
+export function Viewer3D({ toolpathData }: Viewer3DProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<{
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    renderer: THREE.WebGLRenderer;
+    controls: OrbitControls;
+    toolpathGroup: THREE.Group;
+    gridHelper: THREE.GridHelper;
+    axesHelper: THREE.AxesHelper;
+  } | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showAxes, setShowAxes] = useState(true);
+
+  const initScene = useCallback(() => {
+    if (!containerRef.current || sceneRef.current) return;
+
+    const container = containerRef.current;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000);
+    camera.position.set(200, 200, 200);
+    camera.lookAt(0, 0, 0);
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
+
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.screenSpacePanning = true;
+    controls.minDistance = 10;
+    controls.maxDistance = 2000;
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(100, 100, 50);
+    scene.add(directionalLight);
+
+    // Grid
+    const gridHelper = new THREE.GridHelper(500, 50, 0x444444, 0x333333);
+    scene.add(gridHelper);
+
+    // Axes
+    const axesHelper = new THREE.AxesHelper(100);
+    scene.add(axesHelper);
+
+    // Toolpath group
+    const toolpathGroup = new THREE.Group();
+    scene.add(toolpathGroup);
+
+    sceneRef.current = {
+      scene,
+      camera,
+      renderer,
+      controls,
+      gridHelper,
+      axesHelper,
+    };
+    setIsInitialized(true);
+
+    // Animation loop
+    const animate = () => {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    // Resize handler
+    const handleResize = () => {
+      if (!containerRef.current || !sceneRef.current) return;
+      const w = containerRef.current.clientWidth;
+      const h = containerRef.current.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      renderer.dispose();
+      container.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  useEffect(() => {
+    initScene();
+    return () => {
+      if (sceneRef.current) {
+        sceneRef.current.renderer.dispose();
+        if (containerRef.current) {
+          containerRef.current.removeChild(sceneRef.current.renderer.domElement);
+        }
+        sceneRef.current = null;
+      }
+    };
+  }, [initScene]);
+
+  useEffect(() => {
+    if (!sceneRef.current || !toolpathData) return;
+
+    const { toolpathGroup, scene } = sceneRef.current;
+
+    // Clear existing toolpath
+    while (toolpathGroup.children.length > 0) {
+      const child = toolpathGroup.children[0];
+      if (child instanceof THREE.Line || child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        if (child.material instanceof THREE.Material) {
+          child.material.dispose();
+        }
+      }
+      toolpathGroup.remove(child);
+    }
+
+    if (toolpathData.movements.length === 0) return;
+
+    // Colors
+    const rapidColor = new THREE.Color(0x00ff88);
+    const feedColor = new THREE.Color(0x00aaff);
+    const arcColor = new THREE.Color(0xffaa00);
+    const helicalColor = new THREE.Color(0xff00aa);
+
+    // Group movements by type for batching
+    const rapidPoints: THREE.Vector3[] = [];
+    const feedPoints: THREE.Vector3[] = [];
+    const arcSegments: Array<{ points: THREE.Vector3[]; color: THREE.Color }> = [];
+
+    toolpathData.movements.forEach((move) => {
+      if (move.type === "rapid") {
+        rapidPoints.push(new THREE.Vector3(move.x, move.z, move.y));
+      } else if (move.type === "feed") {
+        feedPoints.push(new THREE.Vector3(move.x, move.z, move.y));
+      } else if (move.type === "arc") {
+        const { start, end, center } = move;
+        if (start && end && center) {
+          const arcPoints: THREE.Vector3[] = [];
+          const segments = 32;
+          const startAngle = Math.atan2(start.y - center.y, start.x - center.x);
+          const endAngle = Math.atan2(end.y - center.y, end.x - center.x);
+          const radius = move.radius || 0;
+
+          let angleDiff = endAngle - startAngle;
+          if (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+          if (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+          for (let i = 0; i <= segments; i++) {
+            const angle = startAngle + (angleDiff * i) / segments;
+            arcPoints.push(
+              new THREE.Vector3(
+                center.x + radius * Math.cos(angle),
+                (start.z + end.z) / 2,
+                center.y + radius * Math.sin(angle)
+              )
+            );
+          }
+          arcSegments.push({ points: arcPoints, color: arcColor });
+        }
+      }
+    });
+
+    // Create rapid movement line
+    if (rapidPoints.length > 1) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(rapidPoints);
+      const material = new THREE.LineBasicMaterial({
+        color: rapidColor,
+        linewidth: 1,
+        opacity: 0.8,
+        transparent: true,
+      });
+      const line = new THREE.Line(geometry, material);
+      toolpathGroup.add(line);
+    }
+
+    // Create feed movement line
+    if (feedPoints.length > 1) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(feedPoints);
+      const material = new THREE.LineBasicMaterial({
+        color: feedColor,
+        linewidth: 2,
+        opacity: 1,
+        transparent: true,
+      });
+      const line = new THREE.Line(geometry, material);
+      toolpathGroup.add(line);
+    }
+
+    // Create arc segments
+    arcSegments.forEach((segment) => {
+      if (segment.points.length > 1) {
+        const geometry = new THREE.BufferGeometry().setFromPoints(segment.points);
+        const material = new THREE.LineBasicMaterial({
+          color: segment.color,
+          linewidth: 2,
+          opacity: 1,
+          transparent: true,
+        });
+        const line = new THREE.Line(geometry, material);
+        toolpathGroup.add(line);
+      }
+    });
+
+    // Center view on toolpath
+    const { bounds } = toolpathData;
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+
+    toolpathGroup.position.set(-centerX, -centerZ, -centerY);
+
+    const rangeX = bounds.maxX - bounds.minX || 100;
+    const rangeY = bounds.maxY - bounds.minY || 100;
+    const rangeZ = bounds.maxZ - bounds.minZ || 100;
+    const maxRange = Math.max(rangeX, rangeY, rangeZ);
+
+    const { camera } = sceneRef.current;
+    camera.position.set(maxRange * 1.5, maxRange * 1.5, maxRange * 1.5);
+    camera.lookAt(0, 0, 0);
+    sceneRef.current.controls.target.set(0, 0, 0);
+    sceneRef.current.controls.update();
+
+    // Adjust grid size
+    const gridSize = Math.ceil(maxRange * 1.5);
+    scene.remove(sceneRef.current.gridHelper);
+    sceneRef.current.gridHelper = new THREE.GridHelper(gridSize, 50, 0x444444, 0x333333);
+    scene.add(sceneRef.current.gridHelper);
+  }, [toolpathData]);
+
+  const resetView = () => {
+    if (!sceneRef.current) return;
+    const { camera, controls } = sceneRef.current;
+    if (toolpathData) {
+      const { bounds } = toolpathData;
+      const rangeX = bounds.maxX - bounds.minX || 100;
+      const rangeY = bounds.maxY - bounds.minY || 100;
+      const rangeZ = bounds.maxZ - bounds.minZ || 100;
+      const maxRange = Math.max(rangeX, rangeY, rangeZ);
+      camera.position.set(maxRange * 1.5, maxRange * 1.5, maxRange * 1.5);
+    } else {
+      camera.position.set(200, 200, 200);
+    }
+    controls.target.set(0, 0, 0);
+    controls.update();
+  };
+
+  const zoomIn = () => {
+    if (!sceneRef.current) return;
+    const { camera, controls } = sceneRef.current;
+    camera.position.multiplyScalar(0.8);
+    controls.update();
+  };
+
+  const zoomOut = () => {
+    if (!sceneRef.current) return;
+    const { camera, controls } = sceneRef.current;
+    camera.position.multiplyScalar(1.25);
+    controls.update();
+  };
+
+  const fitToView = () => {
+    if (!sceneRef.current || !toolpathData) return;
+    const { bounds } = toolpathData;
+    const rangeX = bounds.maxX - bounds.minX || 100;
+    const rangeY = bounds.maxY - bounds.minY || 100;
+    const rangeZ = bounds.maxZ - bounds.minZ || 100;
+    const maxRange = Math.max(rangeX, rangeY, rangeZ);
+
+    const { camera, controls } = sceneRef.current;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const fov = camera.fov * (Math.PI / 180);
+    const distance = (maxRange / 2) / Math.tan(fov / 2) * 1.5;
+
+    camera.position.set(distance, distance * 1.2, distance);
+    controls.target.set(0, 0, 0);
+    controls.update();
+  };
+
+  const toggleGrid = () => {
+    if (!sceneRef.current) return;
+    const { scene, gridHelper } = sceneRef.current;
+    const newShowGrid = !showGrid;
+    setShowGrid(newShowGrid);
+    gridHelper.visible = newShowGrid;
+  };
+
+  const toggleAxes = () => {
+    if (!sceneRef.current) return;
+    const { scene, axesHelper } = sceneRef.current;
+    const newShowAxes = !showAxes;
+    setShowAxes(newShowAxes);
+    axesHelper.visible = newShowAxes;
+  };
+
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      
+      {/* Controls */}
+      <div className="absolute bottom-4 left-4 flex flex-col gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={resetView}
+          className="bg-background/80 backdrop-blur-sm hover:bg-background"
+        >
+          <RotateCcw className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomIn}
+          className="bg-background/80 backdrop-blur-sm hover:bg-background"
+        >
+          <ZoomIn className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomOut}
+          className="bg-background/80 backdrop-blur-sm hover:bg-background"
+        >
+          <ZoomOut className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={fitToView}
+          className="bg-background/80 backdrop-blur-sm hover:bg-background"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={toggleGrid}
+          className={`bg-background/80 backdrop-blur-sm hover:bg-background ${showGrid ? 'bg-primary text-primary-foreground' : ''}`}
+        >
+          <Grid3X3 className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {/* Legend */}
+      <div className="absolute top-4 right-4 bg-background/80 backdrop-blur-sm rounded-lg p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-1 bg-[#00ff88] rounded" />
+          <span className="text-xs text-muted-foreground">快速移动</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-1 bg-[#00aaff] rounded" />
+          <span className="text-xs text-muted-foreground">进给移动</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-1 bg-[#ffaa00] rounded" />
+          <span className="text-xs text-muted-foreground">圆弧移动</span>
+        </div>
+      </div>
+
+      {/* Empty state */}
+      {!toolpathData && isInitialized && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="text-center text-muted-foreground">
+            <p className="text-lg">上传 G-code 文件开始模拟</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/SimulatorPage/components/ToolpathInfo.tsx'>
+import { motion } from "framer-motion";
+import { 
+  Box, 
+  Layers, 
+  Clock, 
+  Ruler, 
+  Activity,
+  Zap,
+  Layers3D
+} from "lucide-react";
+
+interface ToolpathInfoProps {
+  totalLines: number;
+  totalDistance: number;
+  estimatedTime: string;
+  bounds: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  };
+  feedRates: {
+    min: number;
+    max: number;
+    avg: number;
+  };
+  layers: number;
+}
+
+export function ToolpathInfo({
+  totalLines,
+  totalDistance,
+  estimatedTime,
+  bounds,
+  feedRates,
+  layers,
+}: ToolpathInfoProps) {
+  const infoItems = [
+    {
+      icon: Box,
+      label: "加工范围",
+      value: `${(bounds.maxX - bounds.minX).toFixed(1)} × ${(bounds.maxY - bounds.minY).toFixed(1)} × ${(bounds.maxZ - bounds.minZ).toFixed(1)} mm`,
+      subLabel: `X: ${bounds.minX.toFixed(1)}~${bounds.maxX.toFixed(1)} | Y: ${bounds.minY.toFixed(1)}~${bounds.maxY.toFixed(1)} | Z: ${bounds.minZ.toFixed(1)}~${bounds.maxZ.toFixed(1)}`,
+      color: "text-blue-400",
+      bgColor: "bg-blue-500/10",
+    },
+    {
+      icon: Layers,
+      label: "刀路层数",
+      value: `${layers} 层`,
+      subLabel: "Z轴分层加工",
+      color: "text-purple-400",
+      bgColor: "bg-purple-500/10",
+    },
+    {
+      icon: Layers3D,
+      label: "总行数",
+      value: totalLines.toLocaleString(),
+      subLabel: "G-code 指令",
+      color: "text-cyan-400",
+      bgColor: "bg-cyan-500/10",
+    },
+    {
+      icon: Ruler,
+      label: "路径总长",
+      value: `${(totalDistance / 1000).toFixed(2)} m`,
+      subLabel: `${totalDistance.toFixed(1)} mm`,
+      color: "text-green-400",
+      bgColor: "bg-green-500/10",
+    },
+    {
+      icon: Clock,
+      label: "预估时间",
+      value: estimatedTime,
+      subLabel: "基于 100% 进给率",
+      color: "text-amber-400",
+      bgColor: "bg-amber-500/10",
+    },
+    {
+      icon: Activity,
+      label: "进给速率",
+      value: `${feedRates.avg.toFixed(0)} mm/min`,
+      subLabel: `范围: ${feedRates.min.toFixed(0)} - ${feedRates.max.toFixed(0)}`,
+      color: "text-rose-400",
+      bgColor: "bg-rose-500/10",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 mb-4">
+        <Zap className="w-5 h-5 text-primary" />
+        <h3 className="text-lg font-semibold text-foreground">刀路信息</h3>
+      </div>
+      
+      <div className="grid grid-cols-1 gap-3">
+        {infoItems.map((item, index) => (
+          <motion.div
+            key={item.label}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.05 }}
+            className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/30 transition-colors"
+          >
+            <div className={`p-2 rounded-lg ${item.bgColor}`}>
+              <item.icon className={`w-5 h-5 ${item.color}`} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm text-muted-foreground">{item.label}</span>
+                <span className="text-base font-semibold text-foreground truncate">
+                  {item.value}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground/70 truncate">
+                {item.subLabel}
+              </p>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/SimulatorPage/components/ViewerControls.tsx'>
+import { useCallback } from "react";
+import { 
+  RotateCcw, 
+  Maximize2, 
+  Grid3x3, 
+  Box, 
+  Eye, 
+  Layers,
+  Move3d
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
+
+export type ViewMode = "path" | "transparent" | "solid";
+export type ViewPreset = "front" | "side" | "top" | "iso";
+
+interface ViewerControlsProps {
+  className?: string;
+  onResetView?: () => void;
+  onFitView?: () => void;
+  onToggleGrid?: (show: boolean) => void;
+  onToggleBoundingBox?: (show: boolean) => void;
+  onChangeViewMode?: (mode: ViewMode) => void;
+  onChangeViewPreset?: (preset: ViewPreset) => void;
+  onChangeZoom?: (zoom: number) => void;
+  onChangeRotationSpeed?: (speed: number) => void;
+  showGrid?: boolean;
+  showBoundingBox?: boolean;
+  viewMode?: ViewMode;
+  viewPreset?: ViewPreset;
+  zoom?: number;
+  rotationSpeed?: number;
+}
+
+export function ViewerControls({
+  className,
+  onResetView,
+  onFitView,
+  onToggleGrid,
+  onToggleBoundingBox,
+  onChangeViewMode,
+  onChangeViewPreset,
+  onChangeZoom,
+  onChangeRotationSpeed,
+  showGrid = true,
+  showBoundingBox = false,
+  viewMode = "path",
+  viewPreset = "iso",
+  zoom = 100,
+  rotationSpeed = 50,
+}: ViewerControlsProps) {
+  const handleGridToggle = useCallback(() => {
+    onToggleGrid?.(!showGrid);
+  }, [showGrid, onToggleGrid]);
+
+  const handleBoundingBoxToggle = useCallback(() => {
+    onToggleBoundingBox?.(!showBoundingBox);
+  }, [showBoundingBox, onToggleBoundingBox]);
+
+  return (
+    <div className={cn(
+      "flex flex-col gap-4 p-4 bg-card rounded-xl border border-border",
+      className
+    )}>
+      {/* 视图操作 */}
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          视图操作
+        </Label>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onResetView}
+            className="w-full"
+          >
+            <RotateCcw className="w-4 h-4 mr-2" />
+            重置
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onFitView}
+            className="w-full"
+          >
+            <Maximize2 className="w-4 h-4 mr-2" />
+            适应
+          </Button>
+        </div>
+      </div>
+
+      {/* 显示选项 */}
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          显示选项
+        </Label>
+        <div className="space-y-2">
+          <Button
+            variant={showGrid ? "default" : "outline"}
+            size="sm"
+            onClick={handleGridToggle}
+            className="w-full justify-start"
+          >
+            <Grid3x3 className="w-4 h-4 mr-2" />
+            {showGrid ? "隐藏网格" : "显示网格"}
+          </Button>
+          <Button
+            variant={showBoundingBox ? "default" : "outline"}
+            size="sm"
+            onClick={handleBoundingBoxToggle}
+            className="w-full justify-start"
+          >
+            <Box className="w-4 h-4 mr-2" />
+            {showBoundingBox ? "隐藏边界框" : "显示边界框"}
+          </Button>
+        </div>
+      </div>
+
+      {/* 显示模式 */}
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          显示模式
+        </Label>
+        <Select value={viewMode} onValueChange={(v) => onChangeViewMode?.(v as ViewMode)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="选择显示模式" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="path">
+              <div className="flex items-center">
+                <Layers className="w-4 h-4 mr-2" />
+                仅路径
+              </div>
+            </SelectItem>
+            <SelectItem value="transparent">
+              <div className="flex items-center">
+                <Eye className="w-4 h-4 mr-2" />
+                半透明
+              </div>
+            </SelectItem>
+            <SelectItem value="solid">
+              <div className="flex items-center">
+                <Box className="w-4 h-4 mr-2" />
+                实体
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* 视角预设 */}
+      <div className="space-y-2">
+        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          视角预设
+        </Label>
+        <Select value={viewPreset} onValueChange={(v) => onChangeViewPreset?.(v as ViewPreset)}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="选择视角" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="front">
+              <div className="flex items-center">
+                <Move3d className="w-4 h-4 mr-2" />
+                正视图
+              </div>
+            </SelectItem>
+            <SelectItem value="side">
+              <div className="flex items-center">
+                <Move3d className="w-4 h-4 mr-2" />
+                侧视图
+              </div>
+            </SelectItem>
+            <SelectItem value="top">
+              <div className="flex items-center">
+                <Move3d className="w-4 h-4 mr-2" />
+                俯视图
+              </div>
+            </SelectItem>
+            <SelectItem value="iso">
+              <div className="flex items-center">
+                <Move3d className="w-4 h-4 mr-2" />
+                等轴测
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* 缩放控制 */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            缩放
+          </Label>
+          <span className="text-xs text-muted-foreground">{zoom}%</span>
+        </div>
+        <Slider
+          value={[zoom]}
+          min={10}
+          max={500}
+          step={10}
+          onValueChange={([v]) => onChangeZoom?.(v)}
+          className="w-full"
+        />
+      </div>
+
+      {/* 旋转速度 */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            旋转速度
+          </Label>
+          <span className="text-xs text-muted-foreground">{rotationSpeed}%</span>
+        </div>
+        <Slider
+          value={[rotationSpeed]}
+          min={0}
+          max={100}
+          step={5}
+          onValueChange={([v]) => onChangeRotationSpeed?.(v)}
+          className="w-full"
+        />
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/SimulatorPage/SimulatorPage.tsx'>
+import { useState, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Upload, RotateCcw, ZoomIn, ZoomOut, Move, Layers, Info, Play, Pause, ChevronLeft, ChevronRight, Settings } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { GcodeViewer } from "./components/GcodeViewer";
+import { InfoPanel } from "./components/InfoPanel";
+import { FileUploader } from "./components/FileUploader";
+import { Toolbar } from "./components/Toolbar";
+import type { GcodeData, ToolpathSegment, ToolpathStats } from "./components/types";
+
+export default function SimulatorPage() {
+  const [gcodeData, setGcodeData] = useState<GcodeData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"3d" | "xy" | "xz" | "yz">("3d");
+  const [showPaths, setShowPaths] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [animatePlayback, setAnimatePlayback] = useState(false);
+  const [playbackProgress, setPlaybackProgress] = useState(0);
+  const [lineWidth, setLineWidth] = useState(1.5);
+  const [showInfoPanel, setShowInfoPanel] = useState(true);
+
+  const handleFileUpload = useCallback((data: GcodeData) => {
+    setGcodeData(data);
+    setIsLoading(false);
+    setPlaybackProgress(0);
+    setAnimatePlayback(false);
+  }, []);
+
+  const handleLoading = useCallback((loading: boolean) => {
+    setIsLoading(loading);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setGcodeData(null);
+    setPlaybackProgress(0);
+    setAnimatePlayback(false);
+  }, []);
+
+  const stats: ToolpathStats | null = gcodeData?.stats || null;
+
+  return (
+    <div className="h-screen w-screen flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 overflow-hidden">
+      {/* Header */}
+      <header className="flex-none h-16 px-6 flex items-center justify-between border-b border-slate-800/50 bg-slate-950/80 backdrop-blur-xl">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+              <Layers className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-white tracking-tight">G-code 刀路模拟器</h1>
+              <p className="text-xs text-slate-500">CNC Toolpath Visualization</p>
+            </div>
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-3">
+          {gcodeData && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800/50 border border-slate-700/50">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-sm text-slate-300 font-medium">{gcodeData.filename}</span>
+            </div>
+          )}
+          <button
+            onClick={() => setShowInfoPanel(!showInfoPanel)}
+            className={cn(
+              "p-2.5 rounded-lg transition-all duration-200",
+              showInfoPanel 
+                ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30" 
+                : "bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-700/50"
+            )}
+          >
+            <Info className="w-4 h-4" />
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Toolbar */}
+        <Toolbar
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
+          showPaths={showPaths}
+          onShowPathsChange={setShowPaths}
+          showGrid={showGrid}
+          onShowGridChange={setShowGrid}
+          onReset={handleReset}
+          hasData={!!gcodeData}
+          lineWidth={lineWidth}
+          onLineWidthChange={setLineWidth}
+        />
+
+        {/* 3D Viewer */}
+        <div className="flex-1 relative">
+          <AnimatePresence mode="wait">
+            {!gcodeData ? (
+              <motion.div
+                key="uploader"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 flex items-center justify-center p-8"
+              >
+                <FileUploader
+                  onFileUpload={handleFileUpload}
+                  onLoading={handleLoading}
+                />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="viewer"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0"
+              >
+                <GcodeViewer
+                  gcodeData={gcodeData}
+                  viewMode={viewMode}
+                  showPaths={showPaths}
+                  showGrid={showGrid}
+                  animatePlayback={animatePlayback}
+                  playbackProgress={playbackProgress}
+                  onPlaybackProgress={setPlaybackProgress}
+                  lineWidth={lineWidth}
+                />
+                
+                {/* Playback Controls */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 shadow-2xl">
+                  <button
+                    onClick={() => setPlaybackProgress(Math.max(0, playbackProgress - 10))}
+                    className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setAnimatePlayback(!animatePlayback)}
+                    className="p-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white shadow-lg shadow-cyan-500/30 transition-all"
+                  >
+                    {animatePlayback ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                  </button>
+                  <button
+                    onClick={() => setPlaybackProgress(Math.min(100, playbackProgress + 10))}
+                    className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                  <div className="w-32 h-1.5 rounded-full bg-slate-700 ml-2">
+                    <div 
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all"
+                      style={{ width: `${playbackProgress}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono w-10">{playbackProgress}%</span>
+                </div>
+
+                {/* Zoom Controls */}
+                <div className="absolute right-6 top-1/2 -translate-y-1/2 flex flex-col gap-2">
+                  <button className="p-3 rounded-xl bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-800/90 transition-all shadow-lg">
+                    <ZoomIn className="w-5 h-5" />
+                  </button>
+                  <button className="p-3 rounded-xl bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-800/90 transition-all shadow-lg">
+                    <ZoomOut className="w-5 h-5" />
+                  </button>
+                  <div className="w-full h-px bg-slate-700/50" />
+                  <button className="p-3 rounded-xl bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-800/90 transition-all shadow-lg">
+                    <RotateCcw className="w-5 h-5" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Loading Overlay */}
+          <AnimatePresence>
+            {isLoading && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50"
+              >
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 border-4 border-slate-700 border-t-cyan-500 rounded-full animate-spin" />
+                  <p className="text-slate-400 font-medium animate-pulse">正在解析 G-code 文件...</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Right Info Panel */}
+        <AnimatePresence>
+          {showInfoPanel && gcodeData && (
+            <motion.div
+              initial={{ x: 320, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 320, opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="w-80 flex-none border-l border-slate-800/50 bg-slate-950/50 backdrop-blur-xl overflow-y-auto"
+            >
+              <InfoPanel stats={stats} gcodeData={gcodeData} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/app.tsx'>
+import { Routes, Route } from "react-router-dom";
+import { Layout } from "@/components/layout";
+import SimulatorPage from "@/pages/SimulatorPage/SimulatorPage";
+import NotFoundPage from "@/pages/NotFoundPage/NotFoundPage";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<SimulatorPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+    </Routes>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/index.css'>
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0,0,0, .03);
+  --elevate-2: rgba(0,0,0, .08);
+
+  --background: hsl(220 20% 6%);
+  --foreground: hsl(210 20% 98%);
+  --card: hsl(220 18% 10%);
+  --card-foreground: hsl(210 20% 98%);
+  --popover: hsl(220 18% 10%);
+  --popover-foreground: hsl(210 20% 98%);
+  --primary: hsl(174 77% 46%);
+  --primary-foreground: hsl(220 20% 6%);
+  --secondary: hsl(220 18% 14%);
+  --secondary-foreground: hsl(210 20% 85%);
+  --muted: hsl(220 18% 14%);
+  --muted-foreground: hsl(215 15% 55%);
+  --accent: hsl(220 18% 16%);
+  --accent-foreground: hsl(210 20% 90%);
+  --info: hsl(210 100% 60%);
+  --info-foreground: hsl(220 20% 6%);
+  --destructive: hsl(2 84% 62%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --success: hsl(130 54% 42%);
+  --success-foreground: hsl(115 77% 97%);
+  --warning: hsl(26 90% 49%);
+  --warning-foreground: hsl(33 100% 96%);
+  --border: hsl(220 15% 20%);
+  --input: hsl(220 15% 20%);
+  --ring: hsl(174 77% 46%);
+  --chart-1: hsl(174 77% 46%);
+  --chart-2: hsl(280 65% 60%);
+  --chart-3: hsl(210 100% 60%);
+  --chart-4: hsl(30 90% 55%);
+  --chart-5: hsl(340 75% 55%);
+  --sidebar: hsl(220 18% 8%);
+  --sidebar-foreground: hsl(210 20% 95%);
+  --sidebar-primary: hsl(174 77% 46%);
+  --sidebar-primary-foreground: hsl(220 20% 6%);
+  --sidebar-accent: hsl(220 18% 16%);
+  --sidebar-accent-foreground: hsl(174 77% 55%);
+  --sidebar-border: hsl(220 15% 18%);
+  --sidebar-ring: hsl(174 77% 46%);
+
+  --primary-border: hsl(from hsl(174 77% 46%) h s calc(l + var(--opaque-button-border-intensity)));
+  --secondary-border: hsl(from hsl(220 18% 14%) h s calc(l + var(--opaque-button-border-intensity)));
+  --destructive-border: hsl(from hsl(2 84% 62%) h s calc(l + var(--opaque-button-border-intensity)));
+  --accent-border: hsl(from hsl(220 18% 16%) h s calc(l + var(--opaque-button-border-intensity)));
+  --muted-border: hsl(from hsl(220 18% 14%) h s calc(l + var(--opaque-button-border-intensity)));
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Tahoma, 'PingFang SC',
+    'Microsoft Yahei', Arial, 'Hiragino Sans GB', sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace;
+  --radius: 0.5rem;
+  --spacing: 0.25rem;
+
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
+  --shadow-sm: 0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
+  --shadow: 0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
+  --shadow-md: 0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 2px 4px -1px hsl(0 0% 0% / 0.02);
+  --shadow-lg: 0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 4px 6px -1px hsl(0 0% 0% / 0.02);
+  --shadow-xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 8px 10px -1px hsl(0 0% 0% / 0.02);
+  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.05);
+  --tracking-normal: 0em;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(220 15% 25%) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 25%);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 15% 35%);
+}
+
+</file_content>

@@ -1,0 +1,15 @@
+{
+  "appId": "app_4jy0svuaxrhh6",
+  "conversationId": "conversation_4jy0tjj82r2xy",
+  "createdAt": "2026-04-15T12:05:49+08:00",
+  "updatedAt": "2026-04-15T12:26:33+08:00",
+  "features": [
+    "client"
+  ],
+  "stack": "apex",
+  "version": "0.1.38",
+  "template": "apex",
+  "archType": 2,
+  "appUrl": "https://xcnmv6snfgei.aiforce.cloud/app/app_4jy0svuaxrhh6",
+  "finalText": "部署完成。由于环境限制无法直接访问 GitHub，您可以使用项目中的压缩包和指南手动推送到仓库。\n\n## 完成总结\n\n**在线预览**: https://xcnmv6snfgei.aiforce.cloud/app/app_4jy0svuaxrhh6\n\n**本地仓库**: 代码已提交 (commit: `8897260`)\n\n**推送材料**:\n- `gcode-toolpath-simulator.zip` - 项目压缩包\n- `GITHUB_PUSH_GUIDE.md` - 推送指南\n\n**功能特性**:\n- G-code 文件上传与解析\n- Three.js 3D 刀路轨迹可视化\n- 旋转/缩放/平移交互控制\n- 多视图模式 (3D/XY/XZ/YZ)\n- 刀路统计信息面板\n- 现代深色主题 UI"
+}
