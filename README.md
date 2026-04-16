@@ -1,80 +1,91 @@
-# AI Workspace 项目集
+# CNC 工具集
 
-这是一个专注于 CNC（计算机数控）和 G 代码相关工具的开源项目集合。所有项目都采用现代化的开发技术栈，旨在为 CNC 爱好者和专业用户提供完整的工具链。
+本仓库包含一系列由 AI 辅助开发的 CNC（计算机数控）相关工具应用。
 
-## 📁 项目目录
+## 项目列表
 
-### 1. [cnc-utils](./cnc-utils/README.md)
-**CNC 实用工具集** - 提供各种 CNC 加工相关的辅助工具和实用程序。
+### 1. [gcode-toolpath-simulator](gcode-toolpath-simulator/)
+G 代码刀路模拟器，支持 G 代码文件上传、3D 可视化、刀路分析和模拟控制。
 
-- **技术栈**: React 19 + TypeScript, Express 5 + TypeScript, PostgreSQL, Tailwind CSS v4
-- **功能**: CNC 加工参数计算、材料数据库、刀具管理、加工时间估算等
-- **状态**: 开发中
+**功能特性**：
+- G 代码文件上传与解析
+- 3D 刀路可视化（Three.js）
+- 刀路信息统计（总距离、加工时间等）
+- 模拟控制（播放/暂停/重置）
+- 多视图切换（俯视、侧视、等轴测）
 
-### 2. [grbl-cnc-controller](./grbl-cnc-controller/README.md)
-**GRBL CNC 控制器** - 开源的 G 代码 CNC 控制器，支持 Arduino 和 ESP32-S3 双平台。
+### 2. [grbl-cnc-controller](grbl-cnc-controller/)
+基于 GRBL 的 CNC 控制器，支持 Arduino 和 ESP32-S3，提供 Web 界面控制。
 
-- **平台**: Arduino Uno/Nano/Mega (串口版本) 和 ESP32-S3 (WiFi 版本)
-- **核心功能**: G 代码解析与执行、实时状态监控、手动控制、限位开关支持
-- **特点**: 双平台支持、网络控制、扩展性强
-- **状态**: 稳定版本可用
+**功能特性**：
+- Web 界面实时控制（坐标、移动、主轴、冷却）
+- G 代码文件上传与执行
+- 手动控制（JOG 模式、归零）
+- WiFi 控制（ESP32-S3 版本）
+- 固件配置与参数管理
 
-### 3. [step-to-gcode](./step-to-gcode/README.md)
-**STEP 转 G 代码转换器** - 将 3D CAD 模型（STEP 格式）转换为 CNC 可执行的 G 代码。
+### 3. [step-to-gcode](step-to-gcode/)
+STEP 文件转 G 代码工具，支持 STEP/STL 文件导入并生成加工路径。
 
-- **技术栈**: React 19 + TypeScript, Express 5 + TypeScript, PostgreSQL, Tailwind CSS v4
-- **功能**: STEP 文件上传与解析、加工参数配置、G 代码生成、3D 预览
-- **状态**: 开发中
+**功能特性**：
+- STEP/STL 文件上传与预览
+- 加工参数设置（刀具直径、切削深度等）
+- 自动生成 G 代码
+- 刀路预览与模拟
+- 支持 2.5D 铣削
 
-### 4. [gcode-toolpath-simulator](./gcode-toolpath-simulator/)
-**G 代码工具路径模拟器** - 可视化 G 代码执行过程，模拟 CNC 机床的加工路径。
+### 4. [cnc-utils](cnc-utils/)
+CNC 实用工具集合，包含切削参数计算、单位换算、公差计算等。
 
-- **状态**: 项目规划中（目录预留）
-- **计划功能**: G 代码可视化、碰撞检测、加工时间估算、3D 模拟
+**功能特性**：
+- 切削参数计算（主轴转速、进给速度、材料去除率）
+- 刀具参数库（5种刀具材料 + 10种工件材料）
+- 公差配合计算（孔轴极限偏差、公差带图示）
+- 单位换算（长度、转速、进给、温度、压力、扭矩）
+- 公式速查（16个常用切削公式）
 
-## 🚀 快速开始
+### 5. [cnc-tools-app](https://xcnmv6snfgei.aiforce.cloud/app/app_4jy9c9bygga3m)
+在线 CNC 工具应用，提供切削参数计算、刀具参数库、公差配合计算等功能。
 
-### 环境要求
-- Node.js 18+ 和 npm/pnpm/yarn
-- PostgreSQL 数据库
-- Arduino IDE 或 PlatformIO（用于 grbl-cnc-controller）
+## 技术栈
 
-### 克隆仓库
+所有 Web 应用均采用现代前端技术栈：
+- **前端**：React + TypeScript + Vite
+- **UI 组件**：自定义组件库 + Tailwind CSS
+- **3D 可视化**：Three.js / @react-three
+- **后端**：Node.js + Express（部分项目）
+- **构建工具**：Vite、pnpm
+
+## 使用说明
+
+每个项目均为独立应用，进入对应目录后执行：
+
 ```bash
-git clone https://github.com/DamienLee2017/AI_workspace.git
-cd AI_workspace
+pnpm install
+pnpm dev
 ```
 
-### 项目选择
-每个项目都是独立的，可以单独运行。进入对应项目目录查看具体的安装和运行说明。
+访问 `http://localhost:5173` 即可运行。
 
-## 📊 项目状态
+## 部署
 
-| 项目 | 状态 | 版本 | 最后更新 |
-|------|------|------|----------|
-| cnc-utils | 🟡 开发中 | v0.1.0 | 2026-04 |
-| grbl-cnc-controller | 🟢 稳定 | v1.0.0 | 2026-04 |
-| step-to-gcode | 🟡 开发中 | v0.1.0 | 2026-04 |
-| gcode-toolpath-simulator | 🔵 规划中 | - | - |
+所有项目均支持静态部署，可使用：
 
-## 🤝 贡献指南
+```bash
+pnpm build
+```
 
-欢迎贡献代码！请遵循以下步骤：
+生成静态文件后部署至任意静态托管服务。
 
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 开启 Pull Request
+## 贡献
 
-## 📄 许可证
+本项目为 AI 辅助开发示例，欢迎反馈与改进建议。
 
-所有项目均采用 MIT 许可证 - 查看 [LICENSE](./LICENSE) 文件了解详情。
+## 许可证
 
-## 📞 联系方式
+MIT License
 
-如有问题或建议，请通过 GitHub Issues 提交。
+## 联系
 
----
-
-*最后更新: 2026年4月*
+- GitHub: [DamienLee2017](https://github.com/DamienLee2017)
+- 项目地址: [AI_workspace](https://github.com/DamienLee2017/AI_workspace)
