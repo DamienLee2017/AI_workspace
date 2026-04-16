@@ -1,0 +1,31 @@
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Build outputs
+*.hex
+*.bin
+*.elf
+*.map
+
+# Arduino
+arduino/build/
+arduino/libraries/
+
+# ESP32
+esp32s3/.pio/
+esp32s3/build/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak

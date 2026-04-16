@@ -1,0 +1,27 @@
+{
+  "name": "grbl-cnc-controller",
+  "version": "1.0.0",
+  "description": "GRBL CNC Controller - Arduino and ESP32-S3 versions",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo Building GRBL CNC Controller firmware...",
+    "dev": "echo Development mode...",
+    "start": "echo Starting...",
+    "test": "echo Testing..."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DamienLee2017/AI_workspace.git"
+  },
+  "keywords": [
+    "cnc",
+    "grbl",
+    "arduino",
+    "esp32",
+    "stepper-motor",
+    "gcode"
+  ],
+  "author": "DamienLee2017",
+  "license": "MIT",
+  "type": "module"
+}

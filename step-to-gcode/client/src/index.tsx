@@ -1,0 +1,16 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import { AppContainer } from "@lark-apaas/client-toolkit-lite";
+import App from "./app";
+import "./index.css";
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <BrowserRouter basename={process.env.CLIENT_BASE_PATH || "/"}>
+      <AppContainer>
+        <App />
+      </AppContainer>
+    </BrowserRouter>
+  </StrictMode>,
+);

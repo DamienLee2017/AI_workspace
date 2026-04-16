@@ -1,0 +1,3785 @@
+批量文件生成完成！成功 6/6 个文件。
+
+## 生成成功的文件
+
+<file_content path='esp32s3/grbl-controller-wifi/WebServer.h'>
+/**
+ * WebServer.h
+ * ESP32-S3 Web 控制界面服务器
+ * 
+ * 作者: DamienLee2017
+ * 许可证: MIT
+ */
+
+#ifndef WEBSERVER_H
+#define WEBSERVER_H
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Update.h>
+#include <SPIFFS.h>
+
+// WebServer 实例
+extern WebServer server;
+
+// ==================== WiFi 配置 ====================
+
+// 默认 AP 模式配置
+#ifndef WIFI_SSID_PREFIX
+#define WIFI_SSID_PREFIX "CNC_Controller_"
+#endif
+
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD "12345678"
+#endif
+
+#ifndef WIFI_CHANNEL
+#define WIFI_CHANNEL 1
+#endif
+
+// 默认 STA 模式配置
+#ifndef STA_WIFI_SSID
+#define STA_WIFI_SSID ""
+#endif
+
+#ifndef STA_WIFI_PASSWORD
+#define STA_WIFI_PASSWORD ""
+#endif
+
+// 超时配置
+#ifndef WIFI_AP_TIMEOUT
+#define WIFI_AP_TIMEOUT 0  // 0 表示不超时
+#endif
+
+// ==================== Telnet 配置 ====================
+
+#ifndef TELNET_PORT
+#define TELNET_PORT 23
+#endif
+
+#ifndef MAX_TELNET_CLIENTS
+#define MAX_TELNET_CLIENTS 3
+#endif
+
+// ==================== 函数声明 ====================
+
+// WiFi 管理
+void initWiFi();
+void startAPMode();
+void startSTAMode();
+void handleWiFiManager();
+String getDeviceIP();
+String getConnectionMode();
+
+// Telnet 服务器
+void initTelnet();
+void handleTelnetClients();
+void telnetPrint(const String& message);
+
+// Web 服务器
+void initWebServer();
+void handleRoot();
+void handleStatus();
+void handleCommand();
+void handleJog();
+void handleGCodeUpload();
+void handleSettings();
+void handleFirmwareUpdate();
+void handleNotFound();
+void handleReset();
+
+// ==================== Web 页面 HTML ====================
+
+const char INDEX_HTML[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNC Controller</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; padding: 20px 0; }
+        .header h1 { font-size: 2.5rem; color: #00d4ff; margin-bottom: 10px; }
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        .status-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px 25px;
+            border-radius: 10px;
+            text-align: center;
+            min-width: 120px;
+        }
+        .status-item .label { font-size: 0.9rem; color: #888; }
+        .status-item .value { font-size: 1.5rem; font-weight: bold; color: #00d4ff; }
+        .status-item.alert .value { color: #ff4757; }
+        .status-item.ready .value { color: #2ed573; }
+        .status-item.warning .value { color: #ffa502; }
+        .panel {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+        }
+        .panel h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            color: #00d4ff;
+            border-bottom: 2px solid #00d4ff;
+            padding-bottom: 10px;
+        }
+        .coord-display {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .coord-item {
+            background: rgba(0,212,255,0.1);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .coord-item .axis { font-size: 1.8rem; font-weight: bold; color: #00d4ff; }
+        .coord-item .pos { font-size: 1.2rem; margin-top: 5px; font-family: monospace; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin: 15px 0; }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        .btn-primary { background: #00d4ff; color: #1a1a2e; }
+        .btn-primary:hover { background: #00b8e6; transform: translateY(-2px); }
+        .btn-danger { background: #ff4757; color: white; }
+        .btn-danger:hover { background: #ff3344; }
+        .btn-warning { background: #ffa502; color: #1a1a2e; }
+        .btn-warning:hover { background: #ff9100; }
+        .btn-success { background: #2ed573; color: #1a1a2e; }
+        .btn-success:hover { background: #26b863; }
+        .btn-secondary { background: #57606f; color: white; }
+        .btn-secondary:hover { background: #485461; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .jog-controls {
+            display: grid;
+            grid-template-columns: repeat(3, 80px);
+            grid-template-rows: repeat(3, 80px);
+            gap: 10px;
+            max-width: 270px;
+            margin: 20px auto;
+        }
+        .jog-btn {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            font-size: 1.5rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(145deg, #2a2a4a, #1a1a3a);
+            color: #00d4ff;
+            border: 2px solid #00d4ff;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        .jog-btn:hover { background: #00d4ff; color: #1a1a2e; }
+        .jog-btn:active { transform: scale(0.95); }
+        .jog-btn.y-plus { grid-column: 2; grid-row: 1; }
+        .jog-btn.x-minus { grid-column: 1; grid-row: 2; }
+        .jog-btn.home { grid-column: 2; grid-row: 2; background: #00d4ff; color: #1a1a2e; }
+        .jog-btn.x-plus { grid-column: 3; grid-row: 2; }
+        .jog-btn.y-minus { grid-column: 2; grid-row: 3; }
+        .jog-btn.z-plus, .jog-btn.z-minus {
+            width: 60px;
+            height: 60px;
+            font-size: 1.2rem;
+            margin: 0 auto;
+            grid-column: 1;
+        }
+        .jog-btn.z-plus { grid-row: 1; }
+        .jog-btn.z-minus { grid-row: 3; }
+        .input-group { margin: 15px 0; }
+        .input-group label { display: block; margin-bottom: 5px; color: #888; }
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #2a2a4a;
+            color: #fff;
+            font-size: 1rem;
+        }
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        .command-input {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        .command-input input {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #00d4ff;
+            border-radius: 10px;
+            background: #1a1a3a;
+            color: #fff;
+            font-family: monospace;
+            font-size: 1.1rem;
+        }
+        .command-input button { padding: 15px 30px; }
+        .console {
+            background: #0a0a1a;
+            border: 1px solid #333;
+            border-radius: 10px;
+            padding: 15px;
+            height: 250px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            margin: 15px 0;
+        }
+        .console div { margin: 5px 0; }
+        .console .cmd { color: #00d4ff; }
+        .console .response { color: #2ed573; }
+        .console .error { color: #ff4757; }
+        .console .info { color: #ffa502; }
+        .file-list { margin: 15px 0; }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            margin: 5px 0;
+        }
+        .file-item span { font-family: monospace; }
+        .progress-bar {
+            width: 100%;
+            height: 25px;
+            background: #2a2a4a;
+            border-radius: 12px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00d4ff, #2ed573);
+            transition: width 0.3s;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        @media (max-width: 768px) {
+            .container { padding: 10px; }
+            .header h1 { font-size: 1.8rem; }
+            .jog-controls { transform: scale(0.8); }
+            .status-bar { gap: 10px; }
+            .status-item { min-width: 100px; padding: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ CNC Controller</h1>
+            <p id="status">Connecting...</p>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-item" id="state-item">
+                <div class="label">状态</div>
+                <div class="value" id="machine-state">--</div>
+            </div>
+            <div class="status-item">
+                <div class="label">进给率</div>
+                <div class="value" id="feed-rate">0</div>
+            </div>
+            <div class="status-item">
+                <div class="label">主轴</div>
+                <div class="value" id="spindle-speed">0</div>
+            </div>
+            <div class="status-item" id="limits-item">
+                <div class="label">限位</div>
+                <div class="value" id="limits">OK</div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>📍 当前位置</h2>
+            <div class="coord-display">
+                <div class="coord-item">
+                    <div class="axis">X</div>
+                    <div class="pos" id="pos-x">0.000</div>
+                </div>
+                <div class="coord-item">
+                    <div class="axis">Y</div>
+                    <div class="pos" id="pos-y">0.000</div>
+                </div>
+                <div class="coord-item">
+                    <div class="axis">Z</div>
+                    <div class="pos" id="pos-z">0.000</div>
+                </div>
+                <div class="coord-item">
+                    <div class="axis">W</div>
+                    <div class="pos" id="work-x">0.000</div>
+                </div>
+                <div class="coord-item">
+                    <div class="axis">W</div>
+                    <div class="pos" id="work-y">0.000</div>
+                </div>
+                <div class="coord-item">
+                    <div class="axis">W</div>
+                    <div class="pos" id="work-z">0.000</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>🎮 JOG 手轮控制</h2>
+            <div class="input-group">
+                <label>步进距离 (mm)</label>
+                <select id="jog-step">
+                    <option value="0.1">0.1 mm</option>
+                    <option value="1" selected>1 mm</option>
+                    <option value="5">5 mm</option>
+                    <option value="10">10 mm</option>
+                    <option value="50">50 mm</option>
+                </select>
+            </div>
+            <div class="jog-controls">
+                <button class="jog-btn z-plus" data-axis="Z" data-dir="+">↑</button>
+                <button class="jog-btn y-plus" data-axis="Y" data-dir="+">Y+</button>
+                <button class="jog-btn x-minus" data-axis="X" data-dir="-">X-</button>
+                <button class="jog-btn home" id="home-all">🏠</button>
+                <button class="jog-btn x-plus" data-axis="X" data-dir="+">X+</button>
+                <button class="jog-btn y-minus" data-axis="Y" data-dir="-">Y-</button>
+                <button class="jog-btn z-minus" data-axis="Z" data-dir="-">↓</button>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" id="start-homing">🔍 归零</button>
+                <button class="btn btn-warning" id="reset-alarm">🔓 解除报警</button>
+                <button class="btn btn-danger" id="emergency-stop">🛑 急停</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>📝 G 代码命令</h2>
+            <div class="command-input">
+                <input type="text" id="gcode-command" placeholder="输入 G 代码命令，如 G1 X10 Y20 F100" onkeypress="handleKeyPress(event)">
+                <button class="btn btn-primary" onclick="sendCommand()">发送</button>
+            </div>
+            <div class="console" id="console"></div>
+            <div class="btn-group">
+                <button class="btn btn-success" id="spindle-on" onclick="spindleControl(true)">主轴启动</button>
+                <button class="btn btn-secondary" id="spindle-off" onclick="spindleControl(false)">主轴停止</button>
+                <button class="btn btn-secondary" onclick="clearConsole()">清除日志</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>📁 G 代码文件</h2>
+            <div class="file-list" id="file-list">
+                <p style="color: #666;">加载中...</p>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="refreshFiles()">🔄 刷新</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>⚡ 快速命令</h2>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="quickCommand('G28')">归零 G28</button>
+                <button class="btn btn-secondary" onclick="quickCommand('G90')">绝对坐标</button>
+                <button class="btn btn-secondary" onclick="quickCommand('G91')">相对坐标</button>
+                <button class="btn btn-secondary" onclick="quickCommand('$X')">解锁 $X</button>
+                <button class="btn btn-secondary" onclick="quickCommand('$$')">查看设置 $$</button>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>GRBL CNC Controller Web Interface | ESP32-S3</p>
+        </div>
+    </div>
+
+    <script>
+        const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = location.host;
+        let ws = null;
+        let reconnectTimer = null;
+        
+        function initWebSocket() {
+            ws = new WebSocket(`${wsProtocol}//${wsHost}/ws`);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                addConsole('Connected to CNC Controller', 'info');
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                }
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleStatusUpdate(data);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                addConsole('Connection lost, reconnecting...', 'error');
+                reconnectTimer = setTimeout(initWebSocket, 2000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        function handleStatusUpdate(data) {
+            // 更新位置显示
+            if (data.mpos) {
+                document.getElementById('pos-x').textContent = data.mpos.x.toFixed(3);
+                document.getElementById('pos-y').textContent = data.mpos.y.toFixed(3);
+                document.getElementById('pos-z').textContent = data.mpos.z.toFixed(3);
+            }
+            if (data.wco) {
+                document.getElementById('work-x').textContent = data.wco.x.toFixed(3);
+                document.getElementById('work-y').textContent = data.wco.y.toFixed(3);
+                document.getElementById('work-z').textContent = data.wco.z.toFixed(3);
+            }
+            // 更新状态
+            if (data.state) {
+                document.getElementById('machine-state').textContent = data.state;
+                const stateItem = document.getElementById('state-item');
+                if (data.state === 'Idle' || data.state === 'Check') {
+                    stateItem.className = 'status-item ready';
+                } else if (data.state === 'Alarm') {
+                    stateItem.className = 'status-item alert';
+                } else {
+                    stateItem.className = 'status-item warning';
+                }
+            }
+            if (data.feed) {
+                document.getElementById('feed-rate').textContent = data.feed;
+            }
+            if (data.spindle) {
+                document.getElementById('spindle-speed').textContent = data.spindle;
+            }
+            if (data.limits !== undefined) {
+                document.getElementById('limits').textContent = data.limits ? 'TRIGGERED' : 'OK';
+                document.getElementById('limits-item').className = data.limits ? 'status-item alert' : 'status-item';
+            }
+        }
+        
+        function sendCommand(cmd) {
+            if (cmd && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'gcode', cmd: cmd }));
+                addConsole('> ' + cmd, 'cmd');
+            }
+        }
+        
+        function sendJog(axis, dir) {
+            const step = parseFloat(document.getElementById('jog-step').value);
+            const distance = dir === '+' ? step : -step;
+            sendCommand('$' + axis + '=' + distance);
+        }
+        
+        function homeAll() {
+            sendCommand('$H');
+        }
+        
+        function spindleControl(on) {
+            sendCommand(on ? 'M3' : 'M5');
+        }
+        
+        function quickCommand(cmd) {
+            sendCommand(cmd);
+        }
+        
+        function emergencyStop() {
+            if (confirm('确认执行急停？')) {
+                sendCommand('!');
+                sendCommand('M5');
+            }
+        }
+        
+        function resetAlarm() {
+            sendCommand('$X');
+        }
+        
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') {
+                sendCommand();
+            }
+        }
+        
+        function addConsole(msg, type) {
+            const console = document.getElementById('console');
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+            console.appendChild(div);
+            console.scrollTop = console.scrollHeight;
+        }
+        
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '';
+        }
+        
+        function refreshFiles() {
+            fetch('/api/files')
+                .then(r => r.json())
+                .then(data => {
+                    const list = document.getElementById('file-list');
+                    if (data.files && data.files.length > 0) {
+                        list.innerHTML = data.files.map(f => 
+                            `<div class="file-item">
+                                <span>${f.name}</span>
+                                <span>${f.size}</span>
+                                <button class="btn btn-secondary" onclick="sendFile('${f.name}')">发送</button>
+                            </div>`
+                        ).join('');
+                    } else {
+                        list.innerHTML = '<p style="color: #666;">没有找到 G 代码文件</p>';
+                    }
+                });
+        }
+        
+        function sendFile(filename) {
+            if (confirm('发送文件 ' + filename + '？')) {
+                sendCommand('%file ' + filename);
+            }
+        }
+        
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initWebSocket();
+            refreshFiles();
+            
+            // JOG 按钮事件
+            document.querySelectorAll('.jog-btn[data-axis]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    sendJog(btn.dataset.axis, btn.dataset.dir);
+                });
+                btn.addEventListener('mousedown', () => btn.classList.add('active'));
+                btn.addEventListener('mouseup', () => btn.classList.remove('active'));
+                btn.addEventListener('mouseleave', () => btn.classList.remove('active'));
+            });
+            
+            document.getElementById('home-all').addEventListener('click', homeAll);
+            document.getElementById('emergency-stop').addEventListener('click', emergencyStop);
+            document.getElementById('reset-alarm').addEventListener('click', resetAlarm);
+            
+            // 状态更新
+            setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'status' }));
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>
+)=====";
+
+// ==================== WiFi 管理类 ====================
+
+class WiFiManager {
+private:
+    bool apMode;
+    unsigned long apStartTime;
+    
+public:
+    WiFiManager() : apMode(false), apStartTime(0) {}
+    
+    void begin() {
+        // 首先尝试 STA 模式
+        if (strlen(STA_WIFI_SSID) > 0) {
+            startSTAMode();
+        } else {
+            startAPMode();
+        }
+    }
+    
+    void startAPMode() {
+        // 生成设备特定 SSID
+        String ssid = WIFI_SSID_PREFIX + String((uint32_t)ESP.getEfuseMac(), HEX);
+        
+        WiFi.mode(WIFI_AP);
+        delay(100);
+        
+        bool success = WiFi.softAP(ssid.c_str(), WIFI_PASSWORD, WIFI_CHANNEL);
+        
+        if (success) {
+            Serial.println("AP Mode Started");
+            Serial.print("SSID: ");
+            Serial.println(ssid);
+            Serial.print("Password: ");
+            Serial.println(WIFI_PASSWORD);
+            Serial.print("IP Address: ");
+            Serial.println(WiFi.softAPIP());
+            apMode = true;
+            apStartTime = millis();
+        } else {
+            Serial.println("Failed to start AP Mode");
+        }
+    }
+    
+    void startSTAMode() {
+        WiFi.mode(WIFI_STA);
+        WiFi.setAutoConnect(false);
+        
+        Serial.print("Connecting to ");
+        Serial.println(STA_WIFI_SSID);
+        
+        WiFi.begin(STA_WIFI_SSID, STA_WIFI_PASSWORD);
+        
+        // 等待连接
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 50) {
+            delay(500);
+            Serial.print(".");
+            attempts++;
+        }
+        
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("\nSTA Mode Connected!");
+            Serial.print("IP Address: ");
+            Serial.println(WiFi.localIP());
+            Serial.print("RSSI: ");
+            Serial.print(WiFi.RSSI());
+            Serial.println(" dBm");
+            apMode = false;
+        } else {
+            Serial.println("\nSTA Connection Failed, starting AP Mode");
+            startAPMode();
+        }
+    }
+    
+    void handle() {
+        if (apMode && WIFI_AP_TIMEOUT > 0) {
+            // 检查 AP 超时
+            if (millis() - apStartTime > (WIFI_AP_TIMEOUT * 1000UL)) {
+                // 尝试切换到 STA 模式
+                if (strlen(STA_WIFI_SSID) > 0) {
+                    WiFi.softAPdisconnect(true);
+                    delay(100);
+                    startSTAMode();
+                }
+            }
+        }
+    }
+    
+    String getMode() {
+        return apMode ? "AP" : "STA";
+    }
+    
+    String getIP() {
+        if (apMode) {
+            return WiFi.softAPIP().toString();
+        } else {
+            return WiFi.localIP().toString();
+        }
+    }
+    
+    String getSSID() {
+        if (apMode) {
+            return WiFi.softAPgetSSID();
+        } else {
+            return WiFi.SSID();
+        }
+    }
+    
+    bool isConnected() {
+        return apMode || WiFi.status() == WL_CONNECTED;
+    }
+};
+
+#endif // WEBSERVER_H
+
+</file_content>
+
+<file_content path='esp32s3/grbl-controller-wifi/WebServer.cpp'>
+/**
+ * ESP32-S3 Web Server Implementation
+ * ESP32-S3 版本 Web 服务器实现
+ * 提供 Web 控制界面和 REST API
+ */
+
+#include "WebServer.h"
+#include "Config.h"
+
+// ==================== Web 服务器实例 ====================
+WebServer server(80);
+
+// ==================== G代码命令队列 ====================
+#include "grbl-controller-wifi.ino"
+
+// ==================== HTML 页面 ====================
+const char INDEX_HTML[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CNC Controller - Web Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        h1 {
+            color: #00d4ff;
+            font-size: 1.8rem;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #666;
+        }
+        
+        .status-dot.connected {
+            background: #00ff88;
+            box-shadow: 0 0 10px #00ff88;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+        
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .panel {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .panel-title {
+            color: #00d4ff;
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        /* 位置显示 */
+        .position-display {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .axis-card {
+            background: rgba(0,212,255,0.1);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+        }
+        
+        .axis-label {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .axis-value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #00d4ff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .axis-unit {
+            font-size: 0.8rem;
+            color: #666;
+        }
+        
+        /* JOG 控制 */
+        .jog-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            max-width: 300px;
+            margin: 0 auto;
+        }
+        
+        .jog-btn {
+            background: linear-gradient(145deg, #2a2a4a, #1a1a3a);
+            border: none;
+            border-radius: 10px;
+            padding: 20px;
+            color: #fff;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .jog-btn:hover {
+            background: linear-gradient(145deg, #3a3a6a, #2a2a5a);
+            transform: scale(1.05);
+        }
+        
+        .jog-btn:active {
+            transform: scale(0.95);
+        }
+        
+        .jog-btn.home {
+            background: linear-gradient(145deg, #00d4ff, #0099cc);
+            grid-column: 2;
+        }
+        
+        .jog-center {
+            grid-column: 2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .jog-center .jog-btn {
+            background: linear-gradient(145deg, #ff6b6b, #cc5555);
+        }
+        
+        /* 速度控制 */
+        .speed-control {
+            margin-top: 20px;
+        }
+        
+        .speed-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #333;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #00d4ff;
+            cursor: pointer;
+        }
+        
+        /* 控制按钮 */
+        .control-buttons {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+        }
+        
+        .ctrl-btn {
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .ctrl-btn.primary {
+            background: linear-gradient(145deg, #00ff88, #00cc66);
+            color: #000;
+        }
+        
+        .ctrl-btn.secondary {
+            background: linear-gradient(145deg, #ffaa00, #cc8800);
+            color: #000;
+        }
+        
+        .ctrl-btn.danger {
+            background: linear-gradient(145deg, #ff5555, #cc3333);
+            color: #fff;
+        }
+        
+        .ctrl-btn.info {
+            background: linear-gradient(145deg, #00d4ff, #0099cc);
+            color: #000;
+        }
+        
+        .ctrl-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        
+        /* G代码输入 */
+        .gcode-input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .gcode-input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .gcode-input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+        
+        /* 状态信息 */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        
+        .status-item {
+            background: rgba(0,0,0,0.2);
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        .status-item .label {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        
+        .status-item .value {
+            font-size: 1.1rem;
+            color: #00ff88;
+            font-weight: bold;
+        }
+        
+        /* 文件上传 */
+        .upload-zone {
+            border: 2px dashed #444;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-zone:hover {
+            border-color: #00d4ff;
+            background: rgba(0,212,255,0.05);
+        }
+        
+        .upload-zone.dragover {
+            border-color: #00ff88;
+            background: rgba(0,255,136,0.1);
+        }
+        
+        /* 连接信息 */
+        .connection-info {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+        
+        .connection-info p {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .connection-info span {
+            color: #00d4ff;
+        }
+        
+        /* 实时数据 */
+        #statusLog {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+        }
+        
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .log-entry.ok { color: #00ff88; }
+        .log-entry.error { color: #ff5555; }
+        .log-entry.info { color: #00d4ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎯 CNC Controller</h1>
+            <div class="status-indicator">
+                <div class="status-dot" id="connectionStatus"></div>
+                <span id="connectionText">Disconnected</span>
+            </div>
+        </header>
+        
+        <div class="main-grid">
+            <div class="left-column">
+                <!-- 位置显示 -->
+                <div class="panel">
+                    <h2 class="panel-title">📍 Current Position</h2>
+                    <div class="position-display">
+                        <div class="axis-card">
+                            <div class="axis-label">X Axis</div>
+                            <div class="axis-value" id="posX">0.000</div>
+                            <div class="axis-unit">mm</div>
+                        </div>
+                        <div class="axis-card">
+                            <div class="axis-label">Y Axis</div>
+                            <div class="axis-value" id="posY">0.000</div>
+                            <div class="axis-unit">mm</div>
+                        </div>
+                        <div class="axis-card">
+                            <div class="axis-label">Z Axis</div>
+                            <div class="axis-value" id="posZ">0.000</div>
+                            <div class="axis-unit">mm</div>
+                        </div>
+                    </div>
+                    
+                    <!-- JOG 控制 -->
+                    <h2 class="panel-title">🎮 JOG Control</h2>
+                    <div class="jog-grid">
+                        <button class="jog-btn" onclick="jogAxis('Y', -1)" onmouseup="stopJog()" onmouseleave="stopJog()">-Y</button>
+                        <button class="jog-btn" onclick="jogAxis('X', 1)" onmouseup="stopJog()" onmouseleave="stopJog()">+X</button>
+                        <button class="jog-btn" onclick="jogAxis('Y', 1)" onmouseup="stopJog()" onmouseleave="stopJog()">+Y</button>
+                        <button class="jog-btn home" onclick="homeAll()">🏠 HOME</button>
+                        <button class="jog-btn" onclick="jogAxis('X', -1)" onmouseup="stopJog()" onmouseleave="stopJog()">-X</button>
+                        <button class="jog-btn" onclick="jogAxis('Z', 1)" onmouseup="stopJog()" onmouseleave="stopJog()">+Z</button>
+                        <button class="jog-btn" onclick="jogAxis('Z', -1)" onmouseup="stopJog()" onmouseleave="stopJog()">-Z</button>
+                    </div>
+                    
+                    <div class="speed-control">
+                        <div class="speed-label">
+                            <span>JOG Speed</span>
+                            <span id="speedValue">100%</span>
+                        </div>
+                        <input type="range" id="jogSpeed" min="10" max="100" value="100" onchange="updateSpeed()">
+                    </div>
+                </div>
+                
+                <!-- G代码输入 -->
+                <div class="panel">
+                    <h2 class="panel-title">⌨️ G-Code Command</h2>
+                    <div class="gcode-input-group">
+                        <input type="text" class="gcode-input" id="gcodeInput" placeholder="Enter G-code (e.g., G0 X10 Y10)">
+                        <button class="ctrl-btn primary" onclick="sendGcode()">Send</button>
+                    </div>
+                    
+                    <div class="gcode-input-group">
+                        <input type="text" class="gcode-input" id="gcodeFile" placeholder="G-code file name" readonly>
+                        <label class="ctrl-btn info">
+                            📁 Upload File
+                            <input type="file" accept=".nc,.gcode,.txt" style="display:none" onchange="uploadFile(this.files[0])">
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- 控制按钮 -->
+                <div class="panel">
+                    <h2 class="panel-title">⚡ Machine Control</h2>
+                    <div class="control-buttons">
+                        <button class="ctrl-btn primary" onclick="cycleStart()">▶ START</button>
+                        <button class="ctrl-btn secondary" onclick="hold()">⏸ HOLD</button>
+                        <button class="ctrl-btn danger" onclick="resetAlarm()">🔔 RESET</button>
+                        <button class="ctrl-btn info" onclick="softReset()">🔄 REBOOT</button>
+                    </div>
+                    
+                    <div class="control-buttons" style="margin-top: 15px;">
+                        <button class="ctrl-btn info" onclick="spindleOn()">主轴 ON</button>
+                        <button class="ctrl-btn secondary" onclick="spindleOff()">主轴 OFF</button>
+                        <button class="ctrl-btn primary" onclick="setOrigin()">原点设置</button>
+                        <button class="ctrl-btn danger" onclick="emergencyStop()">🛑 急停</button>
+                    </div>
+                </div>
+                
+                <!-- 日志 -->
+                <div class="panel">
+                    <h2 class="panel-title">📋 Status Log</h2>
+                    <div id="statusLog">
+                        <div class="log-entry info">System ready...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="right-column">
+                <!-- 连接信息 -->
+                <div class="panel">
+                    <h2 class="panel-title">🌐 Connection</h2>
+                    <div class="connection-info">
+                        <p>IP Address: <span id="ipAddress">---.---.---.---</span></p>
+                        <p>MAC Address: <span id="macAddress">--:--:--:--:--:--</span></p>
+                        <p>Signal: <span id="wifiSignal">-- dBm</span></p>
+                        <p>Uptime: <span id="uptime">0:00:00</span></p>
+                    </div>
+                </div>
+                
+                <!-- 状态信息 -->
+                <div class="panel">
+                    <h2 class="panel-title">📊 Machine Status</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="label">State</div>
+                            <div class="value" id="machineState">IDLE</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Feed Rate</div>
+                            <div class="value" id="feedRate">0</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Spindle</div>
+                            <div class="value" id="spindleSpeed">0 RPM</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Buffer</div>
+                            <div class="value" id="bufferStatus">OK</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 原点状态 -->
+                <div class="panel">
+                    <h2 class="panel-title">🏠 Homing Status</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <div class="label">X Home</div>
+                            <div class="value" id="xHome">✗</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Y Home</div>
+                            <div class="value" id="yHome">✗</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">Z Home</div>
+                            <div class="value" id="zHome">✗</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="label">All Homed</div>
+                            <div class="value" id="allHomed">✗</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 快捷命令 -->
+                <div class="panel">
+                    <h2 class="panel-title">⚡ Quick Commands</h2>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                        <button class="ctrl-btn secondary" onclick="quickCommand('G28')">G28 Home</button>
+                        <button class="ctrl-btn secondary" onclick="quickCommand('G28.1')">Set Home</button>
+                        <button class="ctrl-btn info" onclick="quickCommand('G90')">Abs Mode</button>
+                        <button class="ctrl-btn info" onclick="quickCommand('G91')">Rel Mode</button>
+                        <button class="ctrl-btn secondary" onclick="quickCommand('M5')">Spindle Off</button>
+                        <button class="ctrl-btn info" onclick="quickCommand('$$')">View Settings</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // WebSocket 连接
+        let ws = null;
+        let reconnectTimer = null;
+        let updateTimer = null;
+        
+        // 初始化
+        function init() {
+            getConnectionInfo();
+            connectWebSocket();
+            startUpdateTimer();
+        }
+        
+        // 获取连接信息
+        function getConnectionInfo() {
+            fetch('/api/info')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('ipAddress').textContent = data.ip;
+                    document.getElementById('macAddress').textContent = data.mac;
+                    document.getElementById('wifiSignal').textContent = data.rssi + ' dBm';
+                    updateUptime(data.uptime);
+                });
+        }
+        
+        // WebSocket 连接
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('connectionStatus').classList.add('connected');
+                document.getElementById('connectionText').textContent = 'Connected';
+                addLog('WebSocket connected', 'ok');
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('connectionStatus').classList.remove('connected');
+                document.getElementById('connectionText').textContent = 'Disconnected';
+                addLog('WebSocket disconnected', 'error');
+                reconnectTimer = setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleStatusUpdate(data);
+            };
+        }
+        
+        // 处理状态更新
+        function handleStatusUpdate(data) {
+            if (data.type === 'status') {
+                document.getElementById('posX').textContent = data.x.toFixed(3);
+                document.getElementById('posY').textContent = data.y.toFixed(3);
+                document.getElementById('posZ').textContent = data.z.toFixed(3);
+                document.getElementById('machineState').textContent = data.state;
+                document.getElementById('feedRate').textContent = data.feed;
+                document.getElementById('spindleSpeed').textContent = data.spindle + ' RPM';
+                
+                // 更新原点状态
+                document.getElementById('xHome').textContent = data.homed ? '✓' : '✗';
+                document.getElementById('yHome').textContent = data.homed ? '✓' : '✗';
+                document.getElementById('zHome').textContent = data.homed ? '✓' : '✗';
+                document.getElementById('allHomed').textContent = data.allHomed ? '✓' : '✗';
+            }
+        }
+        
+        // JOG 控制
+        function jogAxis(axis, direction) {
+            const speed = document.getElementById('jogSpeed').value;
+            fetch(`/api/jog?axis=${axis}&dir=${direction}&speed=${speed}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) addLog(data.error, 'error');
+                });
+        }
+        
+        function stopJog() {
+            fetch('/api/jog/stop')
+                .then(r => r.json());
+        }
+        
+        function homeAll() {
+            fetch('/api/home')
+                .then(r => r.json())
+                .then(data => addLog(data.message, 'info'));
+        }
+        
+        function updateSpeed() {
+            document.getElementById('speedValue').textContent = 
+                document.getElementById('jogSpeed').value + '%';
+        }
+        
+        // G代码命令
+        function sendGcode() {
+            const cmd = document.getElementById('gcodeInput').value.trim();
+            if (!cmd) return;
+            
+            fetch('/api/gcode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({command: cmd})
+            })
+            .then(r => r.json())
+            .then(data => {
+                addLog('> ' + cmd, 'info');
+                if (data.ok) addLog(data.response, 'ok');
+                else addLog(data.error, 'error');
+            });
+            
+            document.getElementById('gcodeInput').value = '';
+        }
+        
+        function quickCommand(cmd) {
+            fetch('/api/gcode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({command: cmd})
+            })
+            .then(r => r.json())
+            .then(data => addLog('> ' + cmd, 'info'));
+        }
+        
+        // 文件上传
+        function uploadFile(file) {
+            if (!file) return;
+            
+            document.getElementById('gcodeFile').value = file.name;
+            addLog('Uploading: ' + file.name, 'info');
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok) {
+                    addLog('File uploaded: ' + file.name, 'ok');
+                } else {
+                    addLog('Upload failed: ' + data.error, 'error');
+                }
+            });
+        }
+        
+        // 机器控制
+        function cycleStart() {
+            fetch('/api/control?cmd=start')
+                .then(r => r.json())
+                .then(data => addLog(data.message, 'info'));
+        }
+        
+        function hold() {
+            fetch('/api/control?cmd=hold')
+                .then(r => r.json())
+                .then(data => addLog(data.message, 'info'));
+        }
+        
+        function resetAlarm() {
+            fetch('/api/control?cmd=reset')
+                .then(r => r.json())
+                .then(data => addLog(data.message, 'info'));
+        }
+        
+        function softReset() {
+            if (confirm('Reboot controller?')) {
+                fetch('/api/control?cmd=reboot')
+                    .then(() => {
+                        addLog('Rebooting...', 'info');
+                        setTimeout(() => location.reload(), 3000);
+                    });
+            }
+        }
+        
+        function spindleOn() {
+            quickCommand('M3 S1000');
+        }
+        
+        function spindleOff() {
+            quickCommand('M5');
+        }
+        
+        function setOrigin() {
+            quickCommand('G28.1');
+        }
+        
+        function emergencyStop() {
+            fetch('/api/control?cmd=estop')
+                .then(r => r.json())
+                .then(data => {
+                    addLog('EMERGENCY STOP!', 'error');
+                });
+        }
+        
+        // 日志
+        function addLog(message, type) {
+            const log = document.getElementById('statusLog');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+            entry.textContent = '[' + new Date().toLocaleTimeString() + '] ' + message;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // 定时更新
+        function startUpdateTimer() {
+            updateTimer = setInterval(() => {
+                // 通过轮询获取状态
+                fetch('/api/status')
+                    .then(r => r.json())
+                    .then(data => handleStatusUpdate({type: 'status', ...data}));
+            }, 500);
+        }
+        
+        // 运行时间
+        let startTime = Date.now();
+        function updateUptime(seconds) {
+            if (!seconds) return;
+            startTime = Date.now() - seconds * 1000;
+        }
+        setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const h = Math.floor(elapsed / 3600);
+            const m = Math.floor((elapsed % 3600) / 60);
+            const s = elapsed % 60;
+            document.getElementById('uptime').textContent = 
+                `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+        }, 1000);
+        
+        // 回车发送G代码
+        document.getElementById('gcodeInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendGcode();
+        });
+        
+        // 初始化
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
+)=====";
+
+// ==================== API 处理函数 ====================
+
+// 获取系统信息
+void handleApiInfo() {
+    StaticJsonDocument<512> doc;
+    
+    doc["ip"] = WiFi.localIP().toString();
+    doc["mac"] = WiFi.macAddress();
+    doc["rssi"] = WiFi.RSSI();
+    doc["uptime"] = millis() / 1000;
+    doc["version"] = FIRMWARE_VERSION;
+    doc["board"] = "ESP32-S3";
+    
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+// 获取状态
+void handleApiStatus() {
+    StaticJsonDocument<512> doc;
+    
+    doc["x"] = getPositionX();
+    doc["y"] = getPositionY();
+    doc["z"] = getPositionZ();
+    doc["state"] = getMachineState();
+    doc["feed"] = getCurrentFeedRate();
+    doc["spindle"] = getSpindleSpeed();
+    doc["homed"] = isHomed();
+    doc["allHomed"] = isAllHomed();
+    
+    String response;
+    serializeJson(doc, response);
+    server.send(200, "application/json", response);
+}
+
+// JOG 控制
+void handleApiJog() {
+    if (!server.hasArg("axis") || !server.hasArg("dir")) {
+        server.send(400, "application/json", "{\"error\":\"Missing parameters\"}");
+        return;
+    }
+    
+    String axis = server.arg("axis");
+    int dir = server.arg("dir").toInt();
+    int speed = server.hasArg("speed") ? server.arg("speed").toInt() : 100;
+    
+    float distance = (speed / 100.0) * JOG_STEP_SIZE;
+    
+    if (axis == "X") {
+        jogRelative('X', dir > 0 ? distance : -distance);
+    } else if (axis == "Y") {
+        jogRelative('Y', dir > 0 ? distance : -distance);
+    } else if (axis == "Z") {
+        jogRelative('Z', dir > 0 ? distance : -distance);
+    }
+    
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleApiJogStop() {
+    stopJog();
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// 归零
+void handleApiHome() {
+    startHomingCycle();
+    server.send(200, "application/json", "{\"message\":\"Homing started\"}");
+}
+
+// G代码命令
+void handleApiGcode() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"error\":\"No command\"}");
+        return;
+    }
+    
+    String command = server.arg("plain");
+    command.trim();
+    
+    if (command.length() == 0) {
+        server.send(400, "application/json", "{\"error\":\"Empty command\"}");
+        return;
+    }
+    
+    // 添加到命令队列
+    String response = queueGcodeCommand(command);
+    
+    StaticJsonDocument<256> doc;
+    doc["ok"] = true;
+    doc["response"] = response;
+    
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+}
+
+// 文件上传
+void handleApiUpload() {
+    HTTPUpload& upload = server.upload();
+    
+    static File uploadFile;
+    
+    if (upload.status == UPLOAD_FILE_START) {
+        String filename = upload.filename;
+        if (!filename.endsWith(".gcode") && !filename.endsWith(".nc") && !filename.endsWith(".txt")) {
+            filename += ".gcode";
+        }
+        
+        uploadFile = SPIFFS.open("/uploads/" + filename, FILE_WRITE);
+        if (!uploadFile) {
+            server.send(500, "application/json", "{\"error\":\"Cannot create file\"}");
+            return;
+        }
+        
+        Serial.printf("Upload started: %s\n", filename.c_str());
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (uploadFile) {
+            uploadFile.write(upload.buf, upload.totalSize);
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (uploadFile) {
+            uploadFile.close();
+        }
+        Serial.printf("Upload complete: %s (%d bytes)\n", upload.filename.c_str(), upload.totalSize);
+    }
+    
+    server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// 机器控制
+void handleApiControl() {
+    if (!server.hasArg("cmd")) {
+        server.send(400, "application/json", "{\"error\":\"Missing command\"}");
+        return;
+    }
+    
+    String cmd = server.arg("cmd");
+    String message = "OK";
+    
+    if (cmd == "start") {
+        startCycle();
+        message = "Cycle started";
+    } else if (cmd == "hold") {
+        holdCycle();
+        message = "Hold";
+    } else if (cmd == "reset") {
+        resetAlarm();
+        message = "Alarm reset";
+    } else if (cmd == "reboot") {
+        ESP.restart();
+    } else if (cmd == "estop") {
+        emergencyStop();
+        message = "EMERGENCY STOP";
+    }
+    
+    server.send(200, "application/json", "{\"message\":\"" + message + "\"}");
+}
+
+// ==================== WebSocket 处理 ====================
+WebSocket *wsClient = nullptr;
+
+void handleWebSocket(void *arg, uint8_t *data, size_t len) {
+    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+    
+    if (info->final && info->index == 0 && info->len == len) {
+        data[len] = 0;
+        
+        StaticJsonDocument<256> doc;
+        DeserializationError error = deserializeJson(doc, data);
+        
+        if (!error) {
+            const char* type = doc["type"];
+            
+            if (strcmp(type, "gcode") == 0) {
+                const char* cmd = doc["command"];
+                queueGcodeCommand(cmd);
+            } else if (strcmp(type, "jog") == 0) {
+                const char* axis = doc["axis"];
+                float dist = doc["distance"];
+                jogRelative(axis[0], dist);
+            } else if (strcmp(type, "status") == 0) {
+                // 发送状态更新
+                sendStatusWebSocket();
+            }
+        }
+    }
+}
+
+void sendStatusWebSocket() {
+    if (wsClient && wsClient->available()) {
+        StaticJsonDocument<512> doc;
+        
+        doc["type"] = "status";
+        doc["x"] = getPositionX();
+        doc["y"] = getPositionY();
+        doc["z"] = getPositionZ();
+        doc["state"] = getMachineState();
+        doc["feed"] = getCurrentFeedRate();
+        doc["spindle"] = getSpindleSpeed();
+        doc["homed"] = isHomed();
+        
+        String json;
+        serializeJson(doc, json);
+        
+        wsClient->text(json);
+    }
+}
+
+void onWsEvent(uint8_t num, WStype_t type, uint8_t *data, size_t len) {
+    switch(type) {
+        case WStype_DISCONNECTED:
+            Serial.printf("WebSocket[%u] Disconnected\n", num);
+            break;
+        case WStype_CONNECTED:
+            Serial.printf("WebSocket[%u] Connected\n", num);
+            break;
+        case WStype_TEXT:
+            handleWebSocket(NULL, data, len);
+            break;
+        case WStype_BIN:
+            break;
+        default:
+            break;
+    }
+}
+
+// ==================== 初始化 Web 服务器 ====================
+void initWebServer() {
+    // 创建上传目录
+    if (!SPIFFS.exists("/uploads")) {
+        SPIFFS.mkdir("/uploads");
+    }
+    
+    // 首页
+    server.on("/", HTTP_GET, []() {
+        server.send_P(200, "text/html", INDEX_HTML);
+    });
+    
+    // API 路由
+    server.on("/api/info", HTTP_GET, handleApiInfo);
+    server.on("/api/status", HTTP_GET, handleApiStatus);
+    server.on("/api/jog", HTTP_GET, handleApiJog);
+    server.on("/api/jog/stop", HTTP_GET, handleApiJogStop);
+    server.on("/api/home", HTTP_GET, handleApiHome);
+    server.on("/api/gcode", HTTP_POST, handleApiGcode);
+    server.on("/api/upload", HTTP_POST, []() {
+        handleApiUpload();
+    }, handleApiUpload);
+    server.on("/api/control", HTTP_GET, handleApiControl);
+    
+    // 文件列表
+    server.on("/api/files", HTTP_GET, []() {
+        String json = "[";
+        File root = SPIFFS.open("/uploads");
+        File file = root.openNextFile();
+        bool first = true;
+        while (file) {
+            if (!first) json += ",";
+            json += "{\"name\":\"" + String(file.name()).substring(1) + "\",";
+            json += "\"size\":" + String(file.size()) + "}";
+            file = root.openNextFile();
+            first = false;
+        }
+        json += "]";
+        server.send(200, "application/json", json);
+    });
+    
+    // WebSocket
+    wsServer.onEvent(onWsEvent);
+    wsServer.begin();
+    
+    // 启动服务器
+    server.begin();
+    Serial.println("Web Server started");
+}
+
+void updateWebServer() {
+    wsServer.loop();
+    server.handleClient();
+}
+
+</file_content>
+
+<file_content path='esp32s3/grbl-controller-wifi/TelnetServer.h'>
+/**
+ * TelnetServer.h - ESP32-S3 Telnet 服务器
+ * 
+ * 提供Telnet远程控制接口，兼容GRBL协议
+ * 
+ * 作者: DamienLee2017
+ * 许可证: MIT
+ */
+
+#ifndef TELNET_SERVER_H
+#define TELNET_SERVER_H
+
+#include <WiFi.h>
+#include <HardwareSerial.h>
+
+// Telnet配置常量
+#define TELNET_PORT           23
+#define TELNET_MAX_CLIENTS    1
+#define TELNET_TIMEOUT_MS    5000
+#define TELNET_BUFFER_SIZE    256
+
+// Telnet命令代码 (RFC 854)
+#define TELNET_IAC            255     // Interpret As Command
+#define TELNET_WILL           251     // Will do option
+#define TELNET_WONT           252     // Won't do option
+#define TELNET_DO             253     // Do option
+#define TELNET_DONT           254     // Don't do option
+#define TELNET_ECHO           1       // Echo
+#define TELNET_SGA            3       // Suppress Go Ahead
+#define TELNET_LINEMODE       34      // Line Mode
+#define TELNET_TTYPE          24      // Terminal Type
+#define TELNET_NAWS           31      // Negotiate About Window Size
+#define TELNET_NEW_ENVIRON   39      // New Environment Variables
+
+/**
+ * Telnet状态枚举
+ */
+enum TelnetState {
+  TELNET_STATE_IDLE,
+  TELNET_STATE_CONNECTED,
+  TELNET_STATE_PROCESSING,
+  TELNET_STATE_DISCONNECTED
+};
+
+/**
+ * Telnet客户端结构
+ */
+struct TelnetClient {
+  WiFiClient client;
+  uint8_t rx_buffer[TELNET_BUFFER_SIZE];
+  uint16_t rx_head;
+  uint16_t rx_tail;
+  unsigned long last_activity;
+  bool authenticated;
+  bool echo_enabled;
+  bool use_crlf;
+  
+  TelnetClient() {
+    rx_head = 0;
+    rx_tail = 0;
+    last_activity = 0;
+    authenticated = true;  // 默认无需认证
+    echo_enabled = true;
+    use_crlf = true;
+  }
+  
+  // 检查是否有数据可读
+  bool hasData() {
+    return rx_head != rx_tail;
+  }
+  
+  // 读取一个字节
+  int readByte() {
+    if (rx_head == rx_tail) return -1;
+    uint8_t data = rx_buffer[rx_head];
+    rx_head = (rx_head + 1) % TELNET_BUFFER_SIZE;
+    return data;
+  }
+  
+  // 写入数据到缓冲区
+  size_t writeByte(uint8_t data) {
+    uint16_t next = (rx_tail + 1) % TELNET_BUFFER_SIZE;
+    if (next == rx_head) return 0;  // 缓冲区满
+    rx_buffer[rx_tail] = data;
+    rx_tail = next;
+    return 1;
+  }
+};
+
+/**
+ * Telnet服务器类
+ */
+class TelnetServerClass {
+private:
+  WiFiServer* _server;
+  TelnetClient _clients[TELNET_MAX_CLIENTS];
+  TelnetState _state;
+  bool _enabled;
+  
+  // GRBL控制器回调
+  void (*_onCommand)(const char* command, size_t len);
+  
+  /**
+   * 处理Telnet协议选项
+   */
+  size_t handleTelnetOption(uint8_t option, bool& will, bool& do_ack) {
+    switch (option) {
+      case TELNET_ECHO:
+        will = true;
+        do_ack = true;
+        return 3;
+        
+      case TELNET_SGA:
+        will = true;
+        do_ack = true;
+        return 3;
+        
+      case TELNET_NAWS:
+        will = false;
+        do_ack = true;
+        return 3;
+        
+      default:
+        will = false;
+        do_ack = false;
+        return 0;
+    }
+  }
+  
+  /**
+   * 发送Telnet命令
+   */
+  size_t sendTelnetCommand(WiFiClient& client, uint8_t cmd, uint8_t opt) {
+    uint8_t packet[3] = {TELNET_IAC, cmd, opt};
+    return client.write(packet, 3);
+  }
+  
+  /**
+   * 处理客户端数据
+   */
+  void processClient(TelnetClient& telnetClient) {
+    WiFiClient& client = telnetClient.client;
+    
+    if (!client.connected()) {
+      return;
+    }
+    
+    // 检查超时
+    if (millis() - telnetClient.last_activity > TELNET_TIMEOUT_MS) {
+      client.println("\r\nConnection timeout");
+      client.stop();
+      return;
+    }
+    
+    // 读取可用数据
+    while (client.available() > 0) {
+      int c = client.read();
+      if (c < 0) break;
+      
+      telnetClient.last_activity = millis();
+      
+      // 检查Telnet命令
+      if (c == TELNET_IAC) {
+        // 读取命令和选项
+        int cmd = client.read();
+        if (cmd < 0) {
+          telnetClient.writeByte((uint8_t)c);
+          continue;
+        }
+        
+        int opt = client.read();
+        if (opt < 0) {
+          telnetClient.writeByte((uint8_t)c);
+          telnetClient.writeByte((uint8_t)cmd);
+          continue;
+        }
+        
+        // 处理命令
+        if (cmd == TELNET_WILL || cmd == TELNET_DO) {
+          bool will, do_ack;
+          size_t response_len = handleTelnetOption((uint8_t)opt, will, do_ack);
+          
+          if (response_len > 0) {
+            uint8_t reply_cmd = (cmd == TELNET_WILL) ? 
+              (will ? TELNET_WILL : TELNET_WONT) : 
+              (do_ack ? TELNET_DO : TELNET_DONT);
+            sendTelnetCommand(client, reply_cmd, (uint8_t)opt);
+          }
+        }
+        // 对于其他命令，简单跳过
+        continue;
+      }
+      
+      // 存储到接收缓冲区
+      telnetClient.writeByte((uint8_t)c);
+    }
+    
+    // 处理接收到的命令
+    while (telnetClient.hasData()) {
+      int c = telnetClient.readByte();
+      
+      // 行结束处理
+      if (c == '\r' || c == '\n') {
+        if (telnetClient.use_crlf && c == '\r') {
+          // 检查下一个字符是否为\n
+          if (telnetClient.hasData()) {
+            int peek = telnetClient.readByte();
+            if (peek != '\n') {
+              // 不是\r\n，将peek放回缓冲区
+              telnetClient.rx_head = (telnetClient.rx_head - 1 + TELNET_BUFFER_SIZE) % TELNET_BUFFER_SIZE;
+            }
+          }
+        }
+        
+        // 处理命令
+        processCommand(telnetClient);
+      } else {
+        // 存储字符
+        telnetClient.rx_buffer[TELNET_BUFFER_SIZE - 1] = (uint8_t)c;
+      }
+    }
+  }
+  
+  /**
+   * 处理接收到的命令
+   */
+  void processCommand(TelnetClient& telnetClient) {
+    static char command_buffer[TELNET_BUFFER_SIZE];
+    static size_t cmd_len = 0;
+    
+    // 构建命令字符串
+    for (int i = 0; i < TELNET_BUFFER_SIZE - 1; i++) {
+      int c = telnetClient.readByte();
+      if (c < 0) break;
+      if (c == '\r' || c == '\n') continue;
+      
+      if (cmd_len < TELNET_BUFFER_SIZE - 1) {
+        command_buffer[cmd_len++] = (char)c;
+      }
+    }
+    
+    if (cmd_len == 0) return;
+    
+    command_buffer[cmd_len] = '\0';
+    cmd_len = 0;
+    
+    // 回显命令
+    if (telnetClient.echo_enabled) {
+      telnetClient.client.print(">");
+      telnetClient.client.println(command_buffer);
+    }
+    
+    // 调用命令回调
+    if (_onCommand) {
+      _onCommand(command_buffer, strlen(command_buffer));
+    }
+  }
+  
+public:
+  /**
+   * 构造函数
+   */
+  TelnetServerClass() {
+    _server = nullptr;
+    _enabled = false;
+    _state = TELNET_STATE_IDLE;
+    _onCommand = nullptr;
+  }
+  
+  /**
+   * 初始化Telnet服务器
+   */
+  bool begin(uint16_t port = TELNET_PORT) {
+    if (_enabled) {
+      end();
+    }
+    
+    _server = new WiFiServer(port);
+    _server->begin();
+    _server->setNoDelay(true);
+    
+    _enabled = true;
+    _state = TELNET_STATE_IDLE;
+    
+    Serial.printf("[TELNET] Server started on port %d\r\n", port);
+    
+    return true;
+  }
+  
+  /**
+   * 停止Telnet服务器
+   */
+  void end() {
+    // 断开所有客户端
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        _clients[i].client.stop();
+      }
+    }
+    
+    // 停止服务器
+    if (_server) {
+      _server->stop();
+      delete _server;
+      _server = nullptr;
+    }
+    
+    _enabled = false;
+    _state = TELNET_STATE_IDLE;
+    
+    Serial.println("[TELNET] Server stopped");
+  }
+  
+  /**
+   * 设置命令回调函数
+   */
+  void onCommand(void (*callback)(const char* command, size_t len)) {
+    _onCommand = callback;
+  }
+  
+  /**
+   * 向所有客户端广播消息
+   */
+  size_t broadcast(const char* message) {
+    size_t sent = 0;
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        sent += _clients[i].client.println(message);
+      }
+    }
+    return sent;
+  }
+  
+  /**
+   * 向所有客户端发送原始数据
+   */
+  size_t broadcastRaw(const uint8_t* data, size_t len) {
+    size_t sent = 0;
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        sent += _clients[i].client.write(data, len);
+      }
+    }
+    return sent;
+  }
+  
+  /**
+   * 获取连接的客户端数量
+   */
+  int connectedClients() {
+    int count = 0;
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        count++;
+      }
+    }
+    return count;
+  }
+  
+  /**
+   * 检查是否有客户端连接
+   */
+  bool hasClient() {
+    return connectedClients() > 0;
+  }
+  
+  /**
+   * 获取服务器状态
+   */
+  TelnetState getState() {
+    return _state;
+  }
+  
+  /**
+   * 检查服务器是否启用
+   */
+  bool isEnabled() {
+    return _enabled;
+  }
+  
+  /**
+   * 主循环调用
+   */
+  void handle() {
+    if (!_enabled || !_server) return;
+    
+    // 检查新连接
+    WiFiClient newClient = _server->available();
+    if (newClient) {
+      // 查找空闲的客户端槽位
+      bool connected = false;
+      for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+        if (!_clients[i].client.connected()) {
+          _clients[i].client = newClient;
+          _clients[i].rx_head = 0;
+          _clients[i].rx_tail = 0;
+          _clients[i].last_activity = millis();
+          _clients[i].echo_enabled = true;
+          _clients[i].use_crlf = true;
+          
+          // 发送欢迎消息
+          newClient.println("GRBL CNC Controller (Telnet)");
+          newClient.println("Type '?' for help");
+          newClient.println(">");
+          
+          connected = true;
+          Serial.printf("[TELNET] Client connected from %s\r\n", 
+                        newClient.remoteIP().toString().c_str());
+          break;
+        }
+      }
+      
+      if (!connected) {
+        newClient.println("Too many connections");
+        newClient.stop();
+      }
+    }
+    
+    // 处理所有客户端
+    int active_clients = 0;
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        processClient(_clients[i]);
+        active_clients++;
+      }
+    }
+    
+    // 更新状态
+    _state = (active_clients > 0) ? TELNET_STATE_CONNECTED : TELNET_STATE_IDLE;
+  }
+  
+  /**
+   * 打印服务器状态信息
+   */
+  void printStatus() {
+    Serial.println("\r\n=== Telnet Server Status ===");
+    Serial.printf("Enabled: %s\r\n", _enabled ? "Yes" : "No");
+    Serial.printf("State: %d\r\n", _state);
+    Serial.printf("Port: %d\r\n", TELNET_PORT);
+    Serial.printf("Max Clients: %d\r\n", TELNET_MAX_CLIENTS);
+    Serial.printf("Connected: %d\r\n", connectedClients());
+    
+    for (int i = 0; i < TELNET_MAX_CLIENTS; i++) {
+      if (_clients[i].client.connected()) {
+        Serial.printf("Client %d: %s\r\n", 
+                      i + 1, 
+                      _clients[i].client.remoteIP().toString().c_str());
+      }
+    }
+    Serial.println("============================\r\n");
+  }
+};
+
+// 全局实例
+extern TelnetServerClass TelnetServer;
+
+#endif // TELNET_SERVER_H
+
+</file_content>
+
+<file_content path='esp32s3/grbl-controller-wifi/TelnetServer.cpp'>
+/**
+ * TelnetServer.cpp - ESP32-S3 Telnet 服务器实现
+ * 
+ * 功能：
+ * - 多客户端 Telnet 连接管理
+ * - G 代码命令转发
+ * - 实时状态推送
+ * - 连接状态监控
+ */
+
+#include "TelnetServer.h"
+#include "Config.h"
+
+// ==================== 全局变量 ====================
+
+WiFiServer telnetServer(23);
+WiFiClient telnetClients[MAX_TELNET_CLIENTS];
+bool clientConnected[MAX_TELNET_CLIENTS] = {false};
+
+// 状态同步
+portMUX_TYPE telnetMux = portMUX_INITIALIZER_UNLOCKED;
+bool telnetInitialized = false;
+
+// 环形缓冲区用于状态更新
+#define STATUS_BUFFER_SIZE 256
+char statusBuffer[STATUS_BUFFER_SIZE];
+volatile uint16_t statusBufferIndex = 0;
+
+// ==================== 初始化 ====================
+
+void initTelnetServer() {
+    // 初始化客户端连接状态
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        clientConnected[i] = false;
+        telnetClients[i] = WiFiClient();
+    }
+    
+    // 启动 Telnet 服务器
+    telnetServer.begin();
+    telnetServer.setNoDelay(true);
+    
+    telnetInitialized = true;
+    
+    #ifdef DEBUG_TELNET
+    Serial.println("[TELNET] Telnet server started on port 23");
+    #endif
+}
+
+// ==================== 连接管理 ====================
+
+void handleTelnetClients() {
+    if (!telnetInitialized) {
+        initTelnetServer();
+        return;
+    }
+    
+    // 检查新连接
+    if (telnetServer.hasClient()) {
+        WiFiClient newClient = telnetServer.available();
+        if (newClient) {
+            handleNewConnection(newClient);
+        }
+    }
+    
+    // 处理现有客户端
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i] && telnetClients[i].connected()) {
+            handleClientData(i);
+        } else if (clientConnected[i]) {
+            // 客户端断开
+            disconnectClient(i);
+        }
+    }
+}
+
+void handleNewConnection(WiFiClient& client) {
+    // 查找空闲槽位
+    int slot = -1;
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (!clientConnected[i]) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot == -1) {
+        // 达到最大连接数，拒绝连接
+        client.println("Error: Maximum clients connected. Try again later.");
+        client.stop();
+        #ifdef DEBUG_TELNET
+        Serial.println("[TELNET] Connection rejected - max clients reached");
+        #endif
+        return;
+    }
+    
+    // 配置客户端
+    telnetClients[slot] = client;
+    clientConnected[slot] = true;
+    
+    // 设置超时
+    telnetClients[slot].setTimeout(TELNET_TIMEOUT_MS);
+    
+    // 发送欢迎信息
+    sendWelcomeMessage(slot);
+    
+    #ifdef DEBUG_TELNET
+    Serial.printf("[TELNET] Client %d connected from %s\n", 
+                  slot, client.remoteIP().toString().c_str());
+    #endif
+    
+    // 触发连接回调
+    if (onTelnetConnectCallback) {
+        onTelnetConnectCallback(slot);
+    }
+}
+
+void disconnectClient(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    if (telnetClients[slot]) {
+        telnetClients[slot].stop();
+    }
+    
+    clientConnected[slot] = false;
+    
+    #ifdef DEBUG_TELNET
+    Serial.printf("[TELNET] Client %d disconnected\n", slot);
+    #endif
+    
+    // 触发断开回调
+    if (onTelnetDisconnectCallback) {
+        onTelnetDisconnectCallback(slot);
+    }
+}
+
+// ==================== 数据处理 ====================
+
+void handleClientData(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    // 读取可用数据
+    while (client.available() > 0) {
+        char c = client.read();
+        
+        // Telnet 命令处理
+        if (c == 0xFF) {
+            // IAC (Interpret As Command)
+            if (client.available() >= 2) {
+                handleTelnetCommand(slot);
+            }
+            continue;
+        }
+        
+        // 换行处理
+        if (c == '\r' || c == '\n') {
+            if (bufferIndex > 0) {
+                // 处理命令
+                processTelnetCommand(slot);
+                bufferIndex = 0;
+                memset(commandBuffer, 0, TELNET_BUFFER_SIZE);
+            }
+            continue;
+        }
+        
+        // 普通字符
+        if (bufferIndex < TELNET_BUFFER_SIZE - 1) {
+            commandBuffer[bufferIndex++] = c;
+        }
+    }
+}
+
+void handleTelnetCommand(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    uint8_t cmd = client.read();
+    uint8_t option = client.read();
+    
+    switch (cmd) {
+        case 0xFB: // WILL
+            if (option == 0x01 || option == 0x03) { // Echo or SGA
+                client.write(0xFF);
+                client.write(0xFC);
+                client.write(option);
+            }
+            break;
+            
+        case 0xFC: // WON'T
+            client.write(0xFF);
+            client.write(0xFE);
+            client.write(option);
+            break;
+            
+        case 0xFD: // DO
+            client.write(0xFF);
+            client.write(0xFE);
+            client.write(option);
+            break;
+            
+        case 0xFE: // DON'T
+            client.write(0xFF);
+            client.write(0xFC);
+            client.write(option);
+            break;
+    }
+}
+
+void processTelnetCommand(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    // 跳过空白命令
+    if (bufferIndex == 0) return;
+    
+    // 去除尾随空白
+    while (bufferIndex > 0 && (commandBuffer[bufferIndex - 1] == ' ' || 
+                                commandBuffer[bufferIndex - 1] == '\t')) {
+        bufferIndex--;
+    }
+    
+    if (bufferIndex == 0) return;
+    
+    // 记录命令
+    #ifdef DEBUG_TELNET
+    Serial.printf("[TELNET] Client %d sent: %s\n", slot, commandBuffer);
+    #endif
+    
+    // 检查特殊命令
+    if (handleSpecialCommand(slot)) {
+        return;
+    }
+    
+    // 转发到命令处理器
+    if (onTelnetCommandCallback) {
+        onTelnetCommandCallback(slot, commandBuffer);
+    } else {
+        // 默认处理：转发到串口
+        Serial.println(commandBuffer);
+    }
+}
+
+bool handleSpecialCommand(int slot) {
+    // 帮助命令
+    if (strncmp(commandBuffer, "?", 1) == 0 || 
+        strcasecmp(commandBuffer, "HELP") == 0) {
+        sendHelp(slot);
+        return true;
+    }
+    
+    // 状态查询
+    if (strcasecmp(commandBuffer, "STATUS") == 0 ||
+        strcasecmp(commandBuffer, "STAT") == 0) {
+        sendStatus(slot);
+        return true;
+    }
+    
+    // 连接列表
+    if (strcasecmp(commandBuffer, "CLIENTS") == 0 ||
+        strcasecmp(commandBuffer, "CONNECTIONS") == 0) {
+        sendConnectionList(slot);
+        return true;
+    }
+    
+    // 版本信息
+    if (strcasecmp(commandBuffer, "VERSION") == 0 ||
+        strcasecmp(commandBuffer, "VER") == 0) {
+        sendVersion(slot);
+        return true;
+    }
+    
+    // 复位
+    if (strcasecmp(commandBuffer, "RESET") == 0) {
+        telnetClients[slot].println("[TELNET] Reset command received");
+        telnetClients[slot].println("ok");
+        return true;
+    }
+    
+    // 暂停所有连接
+    if (strcasecmp(commandBuffer, "DISCONNECT ALL") == 0 ||
+        strcasecmp(commandBuffer, "CLOSE ALL") == 0) {
+        disconnectAllClients();
+        telnetClients[slot].println("All clients disconnected");
+        return true;
+    }
+    
+    // 心跳
+    if (strcasecmp(commandBuffer, "PING") == 0) {
+        telnetClients[slot].println("PONG");
+        return true;
+    }
+    
+    return false;
+}
+
+// ==================== 消息发送 ====================
+
+void sendWelcomeMessage(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    client.println("========================================");
+    client.println("  ESP32-S3 CNC Controller - Telnet");
+    client.println("========================================");
+    client.println("");
+    client.println("Connected to GRBL CNC Controller");
+    client.printf("Build: %s %s\n", __DATE__, __TIME__);
+    client.println("");
+    client.println("Type '?' or 'help' for available commands");
+    client.println("========================================");
+    client.println("");
+}
+
+void sendHelp(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    client.println("");
+    client.println("========== Available Commands ==========");
+    client.println("Standard GRBL Commands:");
+    client.println("  G0, G1, G2, G3    - Motion commands");
+    client.println("  G28, G28.1        - Homing");
+    client.println("  G10 L2, G10 L20   - Coordinate system");
+    client.println("  M3, M4, M5        - Spindle control");
+    client.println("  M8, M9            - Coolant control");
+    client.println("");
+    client.println("Telnet Commands:");
+    client.println("  ? or help         - Show this help");
+    client.println("  status or stat    - Show controller status");
+    client.println("  clients           - Show active connections");
+    client.println("  version or ver    - Show firmware version");
+    client.println("  ping              - Test connection");
+    client.println("  disconnect all    - Close all connections");
+    client.println("  reset             - Reset connection");
+    client.println("");
+    client.println("Status Reports:");
+    client.println("  $G                - Parser state");
+    client.println("  $I                - Build info");
+    client.println("  $N                - Startup lines");
+    client.println("  $$                - Settings");
+    client.println("  $#                - Parameters");
+    client.println("========================================");
+    client.println("");
+}
+
+void sendStatus(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    client.println("");
+    client.println("========== Controller Status ==========");
+    
+    // 系统状态
+    client.printf("Mode: %s\n", alarm_mode ? "ALARM" : (is_running ? "RUN" : "IDLE"));
+    client.printf("Position (Work): X:%.3f Y:%.3f Z:%.3f\n", 
+                  work_coords[0], work_coords[1], work_coords[2]);
+    client.printf("Position (Machine): X:%.3f Y:%.3f Z:%.3f\n",
+                  machine_coords[0], machine_coords[1], machine_coords[2]);
+    
+    // 速度状态
+    client.printf("Feed Rate: %.1f mm/min\n", current_feed);
+    client.printf("Rapid Rate: %.1f mm/min\n", rapid_rate);
+    
+    // 主轴状态
+    client.printf("Spindle: %s @ %d RPM\n", spindle_on ? "ON" : "OFF", spindle_speed);
+    
+    // 连接状态
+    int activeConnections = 0;
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i]) activeConnections++;
+    }
+    client.printf("Active Telnet Clients: %d/%d\n", activeConnections, MAX_TELNET_CLIENTS);
+    
+    // WiFi 状态
+    client.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
+    client.printf("Signal: %d dBm\n", WiFi.RSSI());
+    
+    client.println("========================================");
+    client.println("");
+}
+
+void sendConnectionList(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    client.println("");
+    client.println("========== Active Connections =========");
+    
+    bool hasConnections = false;
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i] && telnetClients[i].connected()) {
+            hasConnections = true;
+            client.printf("Slot %d: %s", i, telnetClients[i].remoteIP().toString().c_str());
+            if (i == slot) {
+                client.print(" (this session)");
+            }
+            client.println("");
+        }
+    }
+    
+    if (!hasConnections) {
+        client.println("No active connections");
+    }
+    
+    client.println("========================================");
+    client.println("");
+}
+
+void sendVersion(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    WiFiClient& client = telnetClients[slot];
+    
+    client.println("");
+    client.println("========== Firmware Version ==========");
+    client.println("ESP32-S3 GRBL Controller v1.1f");
+    client.printf("Build Date: %s %s\n", __DATE__, __TIME__);
+    client.println("Platform: ESP32-S3");
+    client.printf("Free Heap: %d bytes\n", ESP.getFreeHeap());
+    client.printf("WiFi Mode: %s\n", WiFiMode() == WIFI_AP ? "AP" : "Station");
+    client.println("======================================");
+    client.println("");
+}
+
+// ==================== 广播功能 ====================
+
+void broadcastToClients(const char* message) {
+    portENTER_CRITICAL(&telnetMux);
+    
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i] && telnetClients[i].connected()) {
+            telnetClients[i].println(message);
+        }
+    }
+    
+    portEXIT_CRITICAL(&telnetMux);
+}
+
+void broadcastStatus() {
+    char status[200];
+    snprintf(status, sizeof(status), 
+             "<Idle,MPos:%.3f,%.3f,%.3f,WPos:%.3f,%.3f,%.3f,F:%.0f,S:0>",
+             machine_coords[0], machine_coords[1], machine_coords[2],
+             work_coords[0], work_coords[1], work_coords[2],
+             current_feed);
+    
+    broadcastToClients(status);
+}
+
+void sendToClient(int slot, const char* message) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return;
+    
+    portENTER_CRITICAL(&telnetMux);
+    
+    if (clientConnected[slot] && telnetClients[slot].connected()) {
+        telnetClients[slot].println(message);
+    }
+    
+    portEXIT_CRITICAL(&telnetMux);
+}
+
+// ==================== 连接管理 ====================
+
+void disconnectAllClients() {
+    portENTER_CRITICAL(&telnetMux);
+    
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i]) {
+            if (telnetClients[i]) {
+                telnetClients[i].stop();
+            }
+            clientConnected[i] = false;
+        }
+    }
+    
+    portEXIT_CRITICAL(&telnetMux);
+    
+    #ifdef DEBUG_TELNET
+    Serial.println("[TELNET] All clients disconnected");
+    #endif
+}
+
+int getActiveClientCount() {
+    int count = 0;
+    
+    portENTER_CRITICAL(&telnetMux);
+    for (int i = 0; i < MAX_TELNET_CLIENTS; i++) {
+        if (clientConnected[i] && telnetClients[i].connected()) {
+            count++;
+        }
+    }
+    portEXIT_CRITICAL(&telnetMux);
+    
+    return count;
+}
+
+bool isTelnetClientConnected(int slot) {
+    if (slot < 0 || slot >= MAX_TELNET_CLIENTS) return false;
+    
+    bool connected = false;
+    
+    portENTER_CRITICAL(&telnetMux);
+    connected = clientConnected[slot] && telnetClients[slot].connected();
+    portEXIT_CRITICAL(&telnetMux);
+    
+    return connected;
+}
+
+// ==================== 回调管理 ====================
+
+TelnetCommandCallback onTelnetCommandCallback = NULL;
+TelnetConnectCallback onTelnetConnectCallback = NULL;
+TelnetDisconnectCallback onTelnetDisconnectCallback = NULL;
+
+void setTelnetCommandCallback(TelnetCommandCallback callback) {
+    onTelnetCommandCallback = callback;
+}
+
+void setTelnetConnectCallback(TelnetConnectCallback callback) {
+    onTelnetConnectCallback = callback;
+}
+
+void setTelnetDisconnectCallback(TelnetDisconnectCallback callback) {
+    onTelnetDisconnectCallback = callback;
+}
+
+// ==================== 清理 ====================
+
+void cleanupTelnetServer() {
+    disconnectAllClients();
+    
+    if (telnetServer) {
+        telnetServer.stop();
+    }
+    
+    telnetInitialized = false;
+    
+    #ifdef DEBUG_TELNET
+    Serial.println("[TELNET] Telnet server stopped");
+    #endif
+}
+
+</file_content>
+
+<file_content path='esp32s3/README.md'>
+# ESP32-S3 WiFi CNC 控制器
+
+基于 ESP32-S3 的高级 CNC 控制器，支持 WiFi 网络控制和 Web 界面。
+
+---
+
+## 特性
+
+- **WiFi 网络控制** - 支持 AP 和 Station 双模式
+- **Web 控制界面** - 浏览器实时控制
+- **Telnet 支持** - 命令行远程控制
+- **OTA 无线更新** - 无需连接 USB 即可更新固件
+- **高性能** - 最高 100kHz 步进频率
+- **实时状态** - WebSocket 推送位置和状态
+
+---
+
+## 硬件要求
+
+| 配件 | 说明 |
+|------|------|
+| ESP32-S3 DevKitC-1 | 主控芯片 |
+| CNC 屏蔽板 | GRBL 兼容 |
+| 步进电机驱动 | A4988 / DRV8825 / TMC2208 |
+| 限位开关 | 机械式或光学式 x6 |
+| 电源 | 12V/24V |
+
+---
+
+## 引脚定义
+
+```
+ESP32-S3 Pinout:
+├── GPIO1  → X Step
+├── GPIO2  → X Dir
+├── GPIO3  → Y Step
+├── GPIO4  → Y Dir
+├── GPIO5  → Z Step
+├── GPIO6  → Z Dir
+├── GPIO7  → Enable (低电平使能)
+├── GPIO8  → X Limit Min
+├── GPIO9  → X Limit Max
+├── GPIO10 → Y Limit Min
+├── GPIO11 → Y Limit Max
+├── GPIO12 → Z Limit Min
+├── GPIO13 → Z Limit Max
+├── GPIO14 → Spindle PWM
+├── GPIO15 → Probe
+├── GPIO16 → Spindle Enable
+└── GND    → GND
+```
+
+详细接线图请参考 [WIRING.md](WIRING.md)
+
+---
+
+## 配置 WiFi
+
+编辑 `Config.h` 修改以下参数：
+
+```cpp
+// WiFi 模式选择
+#define WIFI_MODE_AP  // AP 模式（默认）
+// #define WIFI_MODE_STA  // Station 模式
+
+// AP 模式配置
+#define AP_SSID "CNC_Controller_XXXX"
+#define AP_PASSWORD "12345678"
+
+// Station 模式配置
+#define STA_SSID "YourWiFiSSID"
+#define STA_PASSWORD "YourWiFiPassword"
+```
+
+---
+
+## 上传固件
+
+### 方式一：Arduino IDE
+
+1. 安装 ESP32-S3 开发板支持
+   - 打开 Arduino IDE → 文件 → 首选项
+   - 在"附加开发板管理器网址"添加：
+     ```
+     https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+     ```
+   - 工具 → 开发板 → 开发板管理器 → 安装 ESP32
+
+2. 选择开发板
+   - 工具 → 开发板 → ESP32 Arduino → ESP32S3 Dev Module
+
+3. 配置参数
+   ```
+   Upload Speed: 921600
+   CPU Frequency: 240MHz
+   Flash Size: 4GB (或你的实际大小)
+   Partition Scheme: Default 4MB with spiffs
+   ```
+
+4. 上传代码
+   - 编辑 Config.h 中的 WiFi 设置
+   - 点击上传按钮
+
+### 方式二：PlatformIO
+
+```bash
+cd esp32s3/grbl-controller-wifi
+pio run --target upload
+```
+
+---
+
+## 连接控制
+
+### AP 模式（默认）
+
+ESP32-S3 会创建 WiFi 热点：
+
+```
+SSID: CNC_Controller_XXXX
+Password: 12345678
+IP Address: 192.168.4.1
+```
+
+### Station 模式
+
+连接到您的路由器：
+
+```
+IP Address: 从路由器 DHCP 获取（可在串口监视器查看）
+```
+
+---
+
+## 控制方式
+
+### Web 控制界面
+
+在浏览器中访问：`http://<ESP32_IP>`
+
+功能：
+- 实时位置显示
+- JOG 手轮控制（精细/粗略）
+- 速度调节
+- 状态监控
+- 紧急停止
+
+### Telnet 控制
+
+```bash
+telnet <ESP32_IP> 23
+```
+
+常用命令：
+```
+G0 X10 Y10    # 快速移动
+G1 X50 Y30 F100  # 线性进给
+M3 S1000      # 主轴启动
+M5            # 主轴停止
+$h            # 归零
+$?            # 状态报告
+```
+
+### 串口控制
+
+通过 USB 连接串口，使用与 Arduino 版本相同的 G 代码命令。
+
+---
+
+## Web 界面功能
+
+| 功能 | 说明 |
+|------|------|
+| 位置显示 | 实时显示 X/Y/Z 坐标 |
+| 手轮控制 | 点击或拖动移动轴 |
+| 速度控制 | 滑块调节进给率 |
+| 状态指示 | 运行/暂停/报警状态 |
+| 限位显示 | 显示限位开关状态 |
+| 急停按钮 | 立即停止所有运动 |
+
+---
+
+## 性能参数
+
+| 参数 | 值 |
+|------|------|
+| 主频 | 240 MHz |
+| 最大步率 | 100 kHz |
+| WiFi 标准 | 802.11 b/g/n |
+| 工作温度 | -40°C ~ 85°C |
+
+---
+
+## OTA 更新
+
+通过 Web 界面更新固件：
+
+1. 访问 `http://<ESP32_IP>/update`
+2. 选择 `.bin` 文件
+3. 点击上传
+
+或使用 Arduino OTA：
+
+```cpp
+// 在 Config.h 中启用
+#define ENABLE_OTA true
+#define OTA_PASSWORD "your_ota_password"
+```
+
+---
+
+## 故障排除
+
+### WiFi 无法连接
+
+- 确认密码正确
+- 检查路由器是否支持 2.4GHz（ESP32-S3 不支持 5GHz）
+- 检查信号强度
+
+### Web 界面无法访问
+
+- 确认设备已连接同一网络
+- 检查防火墙设置
+- 尝试直接访问 IP 地址
+
+### 步进电机不工作
+
+- 检查驱动板连接
+- 确认使能信号电平
+- 检查步进脉冲频率
+
+### 串口无输出
+
+- 检查 USB 线连接
+- 确认正确的 COM 端口
+- 尝试不同的波特率
+
+---
+
+## 高级配置
+
+编辑 `Config.h`：
+
+```cpp
+// 步进电机设置
+#define DEFAULT_STEP_WIDTH 5        // 步进脉冲宽度 (us)
+#define DEFAULT_STEP_INTERVAL 50    // 步进间隔 (us)
+#define DEFAULT_ACCELERATION 100    // 加速度 (mm/s²)
+
+// 限位开关设置
+#define LIMIT_SOFT_DISABLE true     // 软限位使能
+#define SOFT_LIMITS {100, 100, 80}   // 软件限位范围
+
+// 主轴设置
+#define SPINDLE_MIN_RPM 0
+#define SPINDLE_MAX_RPM 12000
+
+// 串口设置
+#define SERIAL_BAUD_RATE 115200
+```
+
+---
+
+## 技术支持
+
+- 提交 Issue: https://github.com/DamienLee2017/AI_workspace/issues
+- 文档更新: https://github.com/DamienLee2017/AI_workspace/tree/main/grbl-cnc-controller/esp32s3
+
+---
+
+## 许可
+
+MIT License - 详见项目根目录 LICENSE 文件
+
+</file_content>
+
+<file_content path='esp32s3/WIRING.md'>
+# ESP32-S3 CNC 控制器接线说明
+
+本文档详细介绍 ESP32-S3 版本 CNC 控制器的硬件接线方案。
+
+## 目录
+
+- [硬件准备](#硬件准备)
+- [引脚分配](#引脚分配)
+- [接线图](#接线图)
+- [电源系统](#电源系统)
+- [驱动板连接](#驱动板连接)
+- [限位开关连接](#限位开关连接)
+- [主轴控制](#主轴控制)
+- [探针连接](#探针连接)
+- [完整接线检查清单](#完整接线检查清单)
+- [常见问题](#常见问题)
+
+---
+
+## 硬件准备
+
+### 必需的电子元件
+
+| 元件 | 规格 | 数量 | 备注 |
+|------|------|------|------|
+| ESP32-S3 开发板 | ESP32-S3-DevKitC-1 或兼容板 | 1 | 推荐带 PSRAM 版本 |
+| 步进电机驱动板 | TMC2209 / TMC2208 / A4988 / DRV8825 | 3 | 推荐 TMC2209 静音驱动 |
+| 步进电机 | NEMA 17 (1.8° / 2.5A) | 3 | X/Y/Z 轴 |
+| 开关电源 | 24V 10A 或 12V 8A | 1 | 根据驱动板和电机选择 |
+| CNC 屏蔽板 | GRBL 兼容 | 1 | 可选，提供保护 |
+| 限位开关 | 机械式 (NC 常闭) | 6 | 每轴 2 个 |
+| 散热片 | 适合驱动芯片 | 3 | 必须 |
+| 风扇 | 40mm x 40mm 12V/24V | 1-2 | 散热用 |
+
+### 可选元件
+
+| 元件 | 用途 | 备注 |
+|------|------|------|
+| 主轴电机 | 雕刻/铣削 | 功率根据需求 |
+| 主轴驱动板 | PWM 速度控制 | 支持 0-10V PWM 输入 |
+| 继电器模块 | 主轴启停控制 | 5V 继电器 |
+| 接触器 | 总电源控制 | 急停用 |
+| 急停按钮 | 紧急停止 | 带保护罩 |
+| LED 指示灯 | 状态显示 | 电源/运行/报警 |
+
+---
+
+## 引脚分配
+
+### ESP32-S3 引脚功能表
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ESP32-S3 DevKitC-1                       │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │  3.3V   │ │ GND     │ │ GPIO 0  │ │ GPIO 1  │ ← X Step   │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 2  │ │ GPIO 3  │ │ GPIO 4  │ │ GPIO 5  │ ← X Dir    │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 6  │ │ GPIO 7  │ │ GPIO 8  │ │ GPIO 9  │ ← Y Step   │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 10 │ │ GPIO 11 │ │ GPIO 12 │ │ GPIO 13 │ ← Y Dir    │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 14 │ │ GPIO 15 │ │ GPIO 16 │ │ GPIO 17 │ ← Z Step   │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 18 │ │ GPIO 19 │ │ GPIO 20 │ │ GPIO 21 │ ← Z Dir    │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │  EN     │ │ GND     │ │ 3.3V    │ │ GND     │             │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 40 │ │ GPIO 41 │ │ GPIO 42 │ │ GPIO 43 │ ← 限位开关 │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐             │
+│  │ GPIO 44 │ │ GPIO 45 │ │ GPIO 46 │ │ GPIO 47 │ ← 探针/主轴 │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────┘             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 引脚详细定义
+
+| 功能 | GPIO | 说明 | 连接目标 |
+|------|------|------|----------|
+| X Step | GPIO 1 | X 轴步进脉冲 | 驱动板 STEP |
+| X Dir | GPIO 5 | X 轴方向 | 驱动板 DIR |
+| Y Step | GPIO 8 | Y 轴步进脉冲 | 驱动板 STEP |
+| Y Dir | GPIO 12 | Y 轴方向 | 驱动板 DIR |
+| Z Step | GPIO 17 | Z 轴步进脉冲 | 驱动板 STEP |
+| Z Dir | GPIO 21 | Z 轴方向 | 驱动板 DIR |
+| Enable | GPIO 7 | 电机使能 (低电平有效) | 所有驱动板 ENABLE |
+| X Limit Min | GPIO 40 | X 轴负限位 | 限位开关 |
+| X Limit Max | GPIO 41 | X 轴正限位 | 限位开关 |
+| Y Limit Min | GPIO 42 | Y 轴负限位 | 限位开关 |
+| Y Limit Max | GPIO 43 | Y 轴正限位 | 限位开关 |
+| Z Limit Min | GPIO 44 | Z 轴负限位 | 限位开关 |
+| Z Limit Max | GPIO 45 | Z 轴正限位 | 限位开关 |
+| Spindle PWM | GPIO 46 | 主轴速度 PWM | 主轴驱动 PWM 输入 |
+| Probe | GPIO 47 | 触碰探针 | 探针信号线 |
+| UART TX | GPIO 43 | 调试串口 TX | USB TTL 转换器 |
+| UART RX | GPIO 44 | 调试串口 RX | USB TTL 转换器 |
+
+### GPIO 使用限制
+
+⚠️ **注意事项**：
+- GPIO 0-21 可用于步进电机控制
+- GPIO 40-47 仅支持输入功能，不能用于输出
+- 不要使用内置 FLASH 相关的引脚 (GPIO 46, 47 在某些配置下)
+- 建议预留 GPIO 38-39 用于 I2C 扩展
+
+---
+
+## 接线图
+
+### 整体连接框图
+
+```
+                              ┌──────────────────┐
+                              │   24V/12V 电源    │
+                              │     (8-10A)       │
+                              └────────┬─────────┘
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    │                  │                  │
+                    ▼                  ▼                  ▼
+            ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+            │  TMC2209 X轴   │ │  TMC2209 Y轴   │ │  TMC2209 Z轴   │
+            │   驱动板 #1    │ │   驱动板 #2    │ │   驱动板 #3    │
+            ├───────────────┤ ├───────────────┤ ├───────────────┤
+            │ VMOT ←────────┼─┼─ VMOT ←───────┼─┼─ VMOT         │
+            │ GND  ←────────┼─┼─ GND  ←───────┼─┼─ GND          │
+            │ STEP ←─ GPIO1 │ │ STEP ←─ GPIO8 │ │ STEP ← GPIO17 │
+            │ DIR  ←─ GPIO5 │ │ DIR  ← GPIO12 │ │ DIR  ← GPIO21 │
+            │ EN   ←─ GPIO7 │ │ EN   ← GPIO7  │ │ EN   ← GPIO7  │
+            │ GND  ←────────┼─┼─ GND  ←───────┼─┼─ GND          │
+            └───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+                    │                  │                  │
+                    ▼                  ▼                  ▼
+            ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+            │  NEMA 17 X轴   │ │  NEMA 17 Y轴   │ │  NEMA 17 Z轴   │
+            │    电机        │ │    电机        │ │    电机        │
+            └───────────────┘ └───────────────┘ └───────────────┘
+```
+
+### 详细接线图
+
+```
+ESP32-S3 DevKitC-1
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│   3.3V ─────────────────────────────────────────────────────────────── │
+│                                                                        │
+│   GND  ─┬───────────────────────────────────────────────────────────── │
+│         │                                                             │
+│         ├─► [X Limit Switch Min] ─ GPIO 40                            │
+│         ├─► [X Limit Switch Max] ─ GPIO 41                            │
+│         ├─► [Y Limit Switch Min] ─ GPIO 42                            │
+│         ├─► [Y Limit Switch Max] ─ GPIO 43                            │
+│         ├─► [Z Limit Switch Min] ─ GPIO 44                            │
+│         ├─► [Z Limit Switch Max] ─ GPIO 45                            │
+│         ├─► [Probe Switch] ──────── GPIO 47                            │
+│         └─► [驱动板公共端]                                             │
+│                                                                        │
+│   GPIO 1 ─────────────────────────► X Step ──────► TMC2209 #1 STEP     │
+│   GPIO 5 ─────────────────────────► X Dir  ──────► TMC2209 #1 DIR      │
+│   GPIO 8 ─────────────────────────► Y Step ──────► TMC2209 #2 STEP     │
+│   GPIO 12 ─────────────────────────► Y Dir  ──────► TMC2209 #2 DIR      │
+│   GPIO 17 ─────────────────────────► Z Step ──────► TMC2209 #3 STEP    │
+│   GPIO 21 ─────────────────────────► Z Dir  ──────► TMC2209 #3 DIR      │
+│   GPIO 7 ──┬────────────────────────► Enable ────► 所有驱动板 EN       │
+│            │                                                         │
+│   GPIO 46 ─┴────────────────────────► Spindle PWM                      │
+│                                          │                             │
+│                                          ▼                             │
+│                               ┌──────────────────┐                    │
+│                               │  主轴驱动/继电器 │                    │
+│                               └──────────────────┘                    │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 电源系统
+
+### 电源连接示意图
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        电源系统                                  │
+│                                                                 │
+│   ┌─────────────┐                                               │
+│   │  开关电源    │   输入: AC 220V (或 110V)                      │
+│   │  24V 10A    │                                               │
+│   │             │   输出: DC 24V 10A                            │
+│   └──────┬──────┘                                               │
+│          │                                                      │
+│          ├─────────────────┬─────────────────┐                  │
+│          │                 │                 │                  │
+│          ▼                 ▼                 ▼                  │
+│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐          │
+│   │   驱动板    │   │   驱动板    │   │   驱动板    │          │
+│   │   X 轴      │   │   Y 轴      │   │   Z 轴      │          │
+│   │  VMOT/GND   │   │  VMOT/GND   │   │  VMOT/GND   │          │
+│   └─────────────┘   └─────────────┘   └─────────────┘          │
+│          │                 │                 │                  │
+│          └─────────────────┴─────────────────┘                  │
+│                            │                                     │
+│                            ▼                                     │
+│                     ┌─────────────┐                              │
+│                     │  ESP32-S3   │                              │
+│                     │   电源输入   │                              │
+│                     │  5V USB 或   │                              │
+│                     │  5V 外部供电  │                              │
+│                     └─────────────┘                              │
+│                            │                                     │
+│                            ▼                                     │
+│                     ┌─────────────┐                              │
+│                     │   主轴驱动   │                              │
+│                     │  (24V 输入)  │                              │
+│                     └─────────────┘                              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 电源连接说明
+
+| 电源类型 | 连接位置 | 说明 | 线材规格 |
+|----------|----------|------|----------|
+| 主电源 | 开关电源 L/N 输入 | AC 市电，注意接地 | 0.75mm² |
+| 24V 输出+ | 驱动板 VMOT+ | 所有驱动板并联 | 1.5mm² |
+| 24V 输出- | 驱动板 GND | 电源公共端 | 1.5mm² |
+| ESP32 供电 | USB 或 5V 稳压器 | 建议独立供电 | 0.75mm² |
+| 主轴电源 | 主轴驱动板 | 根据主轴规格 | 2.5mm² |
+
+### 电源注意事项
+
+⚠️ **重要安全提醒**：
+- 首次接线前务必确认电源已关闭
+- 电源输出电压必须与设备额定电压匹配
+- 驱动板 VMOT 需要大容量电容 (建议 100μF 以上)
+- 主电源线和信号线应分开走线，减少干扰
+- 建议在电源输入端添加保险丝或断路器
+
+---
+
+## 驱动板连接
+
+### TMC2209 驱动板连接 (推荐)
+
+TMC2209 是静音步进驱动芯片，推荐用于 CNC 应用。
+
+```
+TMC2209 驱动板引脚布局:
+
+    ┌─────────────────────────────────────────┐
+    │  VMOT        GND         STEP    EN    │
+    │   (+)        (-)         (+)     (+)  │
+    │    │          │           │        │   │
+    │    │          │           │        │   │
+    │    ▼          ▼           ▼        ▼   │
+    │ ┌────┐     ┌────┐     ┌────┐   ┌────┐ │
+    │ │    │     │    │     │    │   │    │ │
+    │ └────┘     └────┘     └────┘   └────┘ │
+    │                                         │
+    │  2B        2A         GND    MS1  MS2 │
+    │    │        │          │        │    │ │
+    │    ▼        ▼          ▼        ▼    ▼ │
+    │ ┌────┐     ┌────┐     ┌────┐   ┌────┐ │
+    │ │    │     │    │     │    │   │    │ │
+    │ └────┘     └────┘     └────┘   └────┘ │
+    │    │        │                        │
+    │    ▼        ▼                        │
+    │  电机 A 相  电机 B 相                 │
+    └─────────────────────────────────────┘
+```
+
+### 连接步骤
+
+1. **电机连接**：
+   - 将步进电机的 A+、A- 连接到驱动板的 2A、2B
+   - 将步进电机的 B+、B- 连接到驱动板的 1A、1B
+   - 注意电机接线顺序，错误可能导致电机震动但不转动
+
+2. **电源连接**：
+   - VMOT 连接 24V/12V 正极
+   - GND 连接电源负极
+   - 建议在 VMOT 和 GND 之间添加 100μF 电容
+
+3. **信号连接**：
+   - STEP 引脚连接到 ESP32 对应轴的步进引脚
+   - DIR 引脚连接到 ESP32 对应轴的方向引脚
+   - EN 引脚连接到 ESP32 的 Enable 引脚
+   - 所有信号 GND 连接到 ESP32 的 GND
+
+### A4988/DRV8825 驱动板连接 (备选)
+
+如果使用 A4988 或 DRV8825 驱动板：
+
+```
+A4988/DRV8825 引脚布局:
+
+    ┌─────────────────────────────────────┐
+    │  ENABLE  MS1  MS2  MS3   RESET  SLEEP│
+    │     │      │    │    │      │      │ │
+    │     ▼      ▼    ▼    ▼      ▼      ▼ │
+    │  ┌────┐ ┌────────────────────┐       │
+    │  │    │ │                    │       │
+    │  └────┘ └────────────────────┘       │
+    │                                         │
+    │  VDD        VMOT        DIR     STEP   │
+    │   (+)        (+)         │        │   │
+    │    │          │           │        │   │
+    │    ▼          ▼           ▼        ▼   │
+    │  ┌────┐     ┌────┐     ┌────┐   ┌────┐ │
+    │  │    │     │    │     │    │   │    │ │
+    │  └────┘     └────┘     └────┘   └────┘ │
+    │    │          │                        │
+    │    ▼          ▼                        │
+    │  逻辑电源    电机电源                    │
+    └─────────────────────────────────────────┘
+```
+
+### 驱动板电流配置
+
+⚠️ **重要**：驱动板必须正确配置电流，否则可能导致电机发热严重或失步。
+
+| 驱动板型号 | 参考电压 (VREF) | 最大电流 | 设置方法 |
+|-----------|----------------|---------|----------|
+| TMC2209 | 1.0-1.5V | 2.0A (外部) | 电位器调整 |
+| DRV8825 | 0.5-1.0V | 2.5A (带散热) | 电位器调整 |
+| A4988 | 0.3-0.6V | 2.0A (带散热) | 电位器调整 |
+
+**VREF 计算公式**：
+- DRV8825: I_max = VREF × 2
+- A4988: I_max = VREF × 2.5
+
+例如：NEMA 17 电机额定电流 1.5A
+- DRV8825: VREF = 1.5 / 2 = 0.75V
+- A4988: VREF = 1.5 / 2.5 = 0.6V
+
+---
+
+## 限位开关连接
+
+### 限位开关类型选择
+
+| 类型 | 优点 | 缺点 | 推荐场景 |
+|------|------|------|----------|
+| 机械开关 (NC) | 可靠、便宜 | 有机械磨损 | 通用场景 |
+| 机械开关 (NO) | 简单接线 | 需要上拉电阻 | 简单项目 |
+| 光学开关 | 无接触、寿命长 | 需要调整位置 | 高速应用 |
+| 磁感应开关 | 非接触、耐用 | 需要磁铁 | 恶劣环境 |
+
+### 限位开关接线 (NC 常闭型)
+
+推荐使用 **NC (常闭)** 型限位开关，因为：
+- 断线时系统会自动触发保护
+- 比 NO 型更安全可靠
+
+```
+NC 型限位开关接线:
+
+    ESP32 GPIO (输入) ──┬──► 限位开关 (NC) ──┬──► GND
+                       │                    │
+                       │    ┌───┐          │
+                       └───►│10K│──────────┘
+                            └───┘
+                           (上拉)
+```
+
+### 完整限位开关连接
+
+```
+                    ┌─────────────────────────────────────┐
+                    │           ESP32-S3                  │
+                    │                                      │
+    X Min ──────────┼─── GPIO 40 ──┐                      │
+    X Max ──────────┼─── GPIO 41   │                      │
+    Y Min ──────────┼─── GPIO 42   │                      │
+    Y Max ──────────┼─── GPIO 43   │                      │
+    Z Min ──────────┼─── GPIO 44   │                      │
+    Z Max ──────────┼─── GPIO 45 ──┴─── GND (公共端)      │
+                    │                                      │
+                    └─────────────────────────────────────┘
+```
+
+### 限位开关安装位置
+
+```
+        ┌─────────────────────────────────────┐
+        │              CNC 机床               │
+        │                                      │
+   X Min│                                      │X Max
+  ──────┼──────► X 轴方向                     │
+        │                                      │
+        │    ┌─────────────────────────┐      │
+        │    │                         │      │
+        │    │      工作区域           │      │
+        │    │                         │      │
+        │    └─────────────────────────┘      │
+        │                                      │
+   Y Min│              │                      │Y Max
+  ──────┼──────────────┼─── Y 轴方向          │
+        │              ▼                      │
+        │           Z 轴                      │
+        │                                      │
+   Z Min│                                     │
+  ──────┼─────────────────────────────────── │
+        │          床面/工件                   │
+        └─────────────────────────────────────┘
+```
+
+### 限位开关安装建议
+
+| 轴 | 安装位置 | 触发时机 |
+|----|----------|----------|
+| X | 工作行程两端 | 超过工作范围 |
+| Y | 工作行程两端 | 超过工作范围 |
+| Z | 上限位 | 防止钻头撞到工件 |
+| Z | 下限位 | 原点位置 |
+
+---
+
+## 主轴控制
+
+### 主轴 PWM 控制
+
+ESP32-S3 可以通过 PWM 信号控制主轴转速。
+
+```
+主轴控制连接图:
+
+    ESP32-S3                主轴驱动/继电器
+    GPIO 46 (PWM) ──────────► PWM 输入
+         │                        │
+         │                        ▼
+         │                  ┌─────────────┐
+         │                  │   主轴电机   │
+         │                  │   (或调速器) │
+         │                  └─────────────┘
+         │
+         ▼
+    GND ──────────────────────► GND 公共端
+```
+
+### 主轴控制模式
+
+| 模式 | 说明 | 实现方式 |
+|------|------|----------|
+| 继电器开关 | 仅启停，无调速 | GPIO 控制继电器 |
+| PWM 调速 | 0-100% 速度可调 | GPIO PWM 输出 |
+| 0-10V 模拟 | 工业标准调速 | PWM + RC 滤波 + 运放 |
+
+### PWM 调速电路 (可选)
+
+如果主轴驱动需要 0-10V 模拟信号：
+
+```
+         ┌────────────────────┐
+         │                    │
+         │    ESP32 GPIO 46   │
+         │         │          │
+         │         ▼          │
+         │    ┌─────────┐     │
+    ─────┤    │  4.7KΩ  │     │
+         │    └────┬────┘     │
+         │         │          │
+         │         ▼          │
+         │    ┌─────────┐     │
+    ─────┤    │  10μF   │     │
+         │    └────┬────┘     │
+         │         │          │
+         │         ▼          │
+         │    ┌─────────┐     │
+         │    │  LM358  │     │
+         │    │  电压跟随 │     │
+         │    └────┬────┘     │
+         │         │          │
+         │         ▼          │
+         │    0-10V 输出       │
+         └────────────────────┘
+```
+
+---
+
+## 探针连接
+
+### 探针用途
+
+触碰探针用于：
+- 工件原点设置
+- 刀具长度测量
+- Z 轴零点校准
+
+### 探针接线
+
+```
+探针连接图:
+
+    ESP32 GPIO 47 ──┬──► 限位开关插座 [探针] ──┬───► 探针 (常开)
+                    │                          │
+                    │    ┌───┐                  │
+                    └───►│10K│──────────────────┘
+                         └───┘
+                         (上拉)
+
+    GND ───────────────────────────────────────► 探针 (公共端)
+```
+
+### 探针安装
+
+```
+    ┌─────────────────────────────────────┐
+    │              主轴                   │
+    │               ▼                     │
+    │         ┌──────────┐                 │
+    │         │  刀具/探针 │                │
+    │         └────┬─────┘                │
+    │              │                      │
+    │              ▼                      │
+    │    ══════════════════════════       │
+    │           工件表面                   │
+    │                                      │
+    │    当探针接触工件时，触发信号         │
+    └─────────────────────────────────────┘
+```
+
+---
+
+## 完整接线检查清单
+
+### 电源系统
+- [ ] 开关电源输入电压正确 (AC 220V 或 110V)
+- [ ] 24V/12V 输出电压正确
+- [ ] 所有电源线连接牢固
+- [ ] 电源正负极没有短路
+- [ ] 驱动板 VMOT/GND 电容已安装
+
+### 步进电机驱动
+- [ ] X 轴驱动板 STEP 连接 GPIO 1
+- [ ] X 轴驱动板 DIR 连接 GPIO 5
+- [ ] Y 轴驱动板 STEP 连接 GPIO 8
+- [ ] Y 轴驱动板 DIR 连接 GPIO 12
+- [ ] Z 轴驱动板 STEP 连接 GPIO 17
+- [ ] Z 轴驱动板 DIR 连接 GPIO 21
+- [ ] 所有驱动板 ENABLE 并联到 GPIO 7
+- [ ] 所有驱动板 GND 连接到 ESP32 GND
+- [ ] 驱动板电流设置正确
+
+### 步进电机
+- [ ] X 轴电机正确连接到 X 驱动板
+- [ ] Y 轴电机正确连接到 Y 驱动板
+- [ ] Z 轴电机正确连接到 Z 驱动板
+- [ ] 电机四根线没有短路
+- [ ] 电机相序正确 (可通过测试判断)
+
+### 限位开关
+- [ ] X Min 限位开关连接 GPIO 40
+- [ ] X Max 限位开关连接 GPIO 41
+- [ ] Y Min 限位开关连接 GPIO 42
+- [ ] Y Max 限位开关连接 GPIO 43
+- [ ] Z Min 限位开关连接 GPIO 44
+- [ ] Z Max 限位开关连接 GPIO 45
+- [ ] 所有限位开关 GND 连接到 ESP32 GND
+- [ ] 限位开关已正确安装并测试
+
+### 主轴控制
+- [ ] 主轴 PWM 连接 GPIO 46
+- [ ] 主轴继电器/调速器接线正确
+- [ ] 主轴电机电源连接正确
+
+### 探针
+- [ ] 探针连接 GPIO 47
+- [ ] 探针 GND 连接到 ESP32 GND
+
+### ESP32-S3
+- [ ] ESP32-S3 供电正常 (USB 或 5V 外部供电)
+- [ ] USB 数据线连接可靠
+- [ ] 所有 GPIO 信号线连接正确
+
+---
+
+## 常见问题
+
+### Q1: 步进电机抖动但不转动
+
+**可能原因**：
+1. 电机接线顺序错误
+2. 驱动板电流设置过低
+3. 电源电压不足
+
+**解决方法**：
+1. 交换电机 A 相或 B 相的两根线
+2. 调整驱动板 VREF 电压
+3. 检查电源输出功率
+
+### Q2: 限位开关不断触发
+
+**可能原因**：
+1. 限位开关类型不匹配 (NC/NO)
+2. 接线错误
+3. 上拉/下拉电阻配置错误
+
+**解决方法**：
+1. 检查限位开关类型，NC 型需要下拉
+2. 检查接线是否正确
+3. 在代码中检查引脚模式配置
+
+### Q3: 步进电机发热严重
+
+**可能原因**：
+1. 驱动板电流设置过高
+2. 散热不足
+3. 电机长时间静止但保持通电
+
+**解决方法**：
+1. 降低驱动板 VREF 电压 (但不能低于电机额定电流)
+2. 添加散热片和风扇
+3. 空闲时禁用电机 (ESP32 ENABLE 信号)
+
+### Q4: 运动方向与预期相反
+
+**可能原因**：
+1. 电机接线反相
+2. 方向信号反转
+
+**解决方法**：
+1. 交换电机 A 相和 B 相
+2. 或在 Config.h 中设置 `DIR_INVERT`
+
+### Q5: 串口通信不稳定
+
+**可能原因**：
+1. USB 线质量差
+2. 电源干扰
+3. 波特率不匹配
+
+**解决方法**：
+1. 使用优质的 USB 数据线
+2. 将信号线远离电源线
+3. 检查代码中波特率设置
+
+---
+
+## 接线附件
+
+### 推荐线材规格
+
+| 用途 | 线材规格 | 备注 |
+|------|----------|------|
+| 电源线 (24V) | 1.5mm² 红色/黑色 | 承载电流 8-10A |
+| 电机线 | 0.75-1.0mm² 四芯线 | 根据电机电流 |
+| 信号线 | 0.3-0.5mm² 杜邦线 | 逻辑信号 |
+| 限位开关线 | 0.3mm² 两芯屏蔽线 | 抗干扰 |
+
+### 推荐连接器
+
+| 连接类型 | 推荐型号 | 备注 |
+|----------|----------|------|
+| 端子排 | KF301-3.81mm | 信号连接 |
+| XT30/XT60 | XT30/XT60 | 电源连接 |
+| JST-XH | JST-XH 4Pin | 电机连接 |
+| Dupont | 2.54mm 排针排母 | 杜邦线连接 |
+
+---
+
+## 接线安全提示
+
+⚠️ **重要安全提醒**：
+
+1. **断电操作**：在进行任何接线操作前，必须关闭电源并等待 30 秒让电容放电
+
+2. **防止短路**：接线时注意正负极不要短路，特别是使用螺丝刀等金属工具时
+
+3. **绝缘保护**：裸露的导线必须使用热缩管或电工胶带绝缘
+
+4. **接地可靠**：设备外壳必须可靠接地，防止触电
+
+5. **散热处理**：驱动板必须安装散热片，空闲时注意通风
+
+6. **急停装置**：必须安装急停按钮，并确保能够快速切断电源
+
+7. **首次测试**：首次上电时，用手靠近机器，准备随时断电
+
+---
+
+## 技术支持
+
+如遇到接线问题，请检查：
+
+1. [项目主仓库](https://github.com/DamienLee2017/AI_workspace)
+2. [ESP32-S3 部署指南](README.md)
+3. [常见问题解答](../docs/troubleshooting.md)
+
+---
+
+**文档版本**: v1.0  
+**更新日期**: 2024  
+**维护者**: DamienLee2017
+
+</file_content>

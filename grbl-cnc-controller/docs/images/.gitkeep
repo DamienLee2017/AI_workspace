@@ -1,0 +1,9 @@
+# 图片资源目录
+# 请将 CNC 控制器的图片资源放在此目录下
+#
+# 建议包含以下图片：
+# - cnc-controller-banner.png: 项目横幅图
+# - arduino-wiring.png: Arduino 接线图
+# - esp32-wiring.png: ESP32-S3 接线图
+# - web-interface.png: Web 控制界面截图
+# - hardware-overview.jpg: 硬件概览图

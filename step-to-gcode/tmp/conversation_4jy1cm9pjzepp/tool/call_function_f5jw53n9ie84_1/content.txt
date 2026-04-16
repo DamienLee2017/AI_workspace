@@ -1,0 +1,2193 @@
+批量文件生成完成！成功 12/12 个文件。
+
+## 生成成功的文件
+
+<file_content path='shared/types.ts'>
+// STEP转G代码应用 - 共享类型定义
+
+/** 加工参数配置 */
+export interface MachiningParams {
+  /** 进给速度 mm/min */
+  feedRate: number;
+  /** 主轴转速 RPM */
+  spindleSpeed: number;
+  /** 切削深度 mm */
+  cutDepth: number;
+  /** 安全高度 mm */
+  safeHeight: number;
+  /** 步进距离 mm */
+  stepOver: number;
+  /** 加工余量 mm */
+  stock: number;
+}
+
+/** 默认加工参数 */
+export const DEFAULT_MACHINING_PARAMS: MachiningParams = {
+  feedRate: 1000,
+  spindleSpeed: 3000,
+  cutDepth: 2,
+  safeHeight: 5,
+  stepOver: 1,
+  stock: 0.5,
+};
+
+/** 刀路点 */
+export interface ToolpathPoint {
+  x: number;
+  y: number;
+  z: number;
+  /** 移动类型: rapid=快速移动, cut=切削, retract=抬刀 */
+  type: 'rapid' | 'cut' | 'retract';
+}
+
+/** 刀路数据 */
+export interface Toolpath {
+  points: ToolpathPoint[];
+  /** 总长度 mm */
+  totalLength: number;
+  /** 预估时间 秒 */
+  estimatedTime: number;
+}
+
+/** 模型信息 */
+export interface ModelInfo {
+  name: string;
+  /** 包围盒尺寸 */
+  boundingBox: {
+    width: number;
+    height: number;
+    depth: number;
+  };
+  /** 顶点数 */
+  vertexCount: number;
+  /** 面数 */
+  faceCount: number;
+}
+
+/** G代码生成结果 */
+export interface GcodeResult {
+  gcode: string;
+  toolpath: Toolpath;
+  modelInfo: ModelInfo;
+}
+
+/** 文件上传响应 */
+export interface UploadResponse {
+  success: boolean;
+  modelInfo?: ModelInfo;
+  error?: string;
+}
+
+</file_content>
+
+<file_content path='shared/api.interface.ts'>
+import { z } from "zod";
+
+// ============ 枚举定义 ============
+
+export const machiningStrategyEnum = z.enum([
+  "parallel",      // 平行切削
+  "contour",       // 轮廓切削
+  "pocket",        // 型腔加工
+  "drill",         // 钻孔
+  "adaptive",      // 自适应加工
+]);
+
+export const toolTypeEnum = z.enum([
+  "flat_end",      // 平底端铣刀
+  "ball_end",      // 球头铣刀
+  "torus_end",     // 圆角铣刀
+  "drill",         // 钻头
+  "chamfer",       // 倒角刀
+]);
+
+export const materialTypeEnum = z.enum([
+  "aluminum",      // 铝合金
+  "steel",         // 钢
+  "stainless",     // 不锈钢
+  "titanium",      // 钛合金
+  "brass",         // 黄铜
+  "plastic",       // 塑料
+  "wood",          // 木材
+]);
+
+// ============ STEP文件处理 ============
+
+export const stepUploadSchema = z.object({
+  filename: z.string().min(1),
+  fileSize: z.number().positive(),
+});
+
+export type StepUploadRequest = z.infer<typeof stepUploadSchema>;
+
+export const stepUploadResponseSchema = z.object({
+  success: z.boolean(),
+  sessionId: z.string(),
+  fileInfo: z.object({
+    filename: z.string(),
+    fileSize: z.number(),
+    uploadTime: z.string(),
+  }),
+  modelInfo: z.object({
+    name: z.string().optional(),
+    boundingBox: z.object({
+      minX: z.number(),
+      minY: z.number(),
+      minZ: z.number(),
+      maxX: z.number(),
+      maxY: z.number(),
+      maxZ: z.number(),
+    }),
+    surfaceArea: z.number().optional(),
+    volume: z.number().optional(),
+    triangleCount: z.number(),
+  }).optional(),
+});
+
+export type StepUploadResponse = z.infer<typeof stepUploadResponseSchema>;
+
+// ============ 加工参数 ============
+
+export const machiningParamsSchema = z.object({
+  // 刀具参数
+  toolType: toolTypeEnum,
+  toolDiameter: z.number().positive(),           // 刀具直径 (mm)
+  toolFlutes: z.number().int().positive(),        // 刀刃数
+  
+  // 材料参数
+  material: materialTypeEnum,
+  
+  // 切削参数
+  spindleSpeed: z.number().positive(),            // 主轴转速 (RPM)
+  feedRate: z.number().positive(),                // 进给速度 (mm/min)
+  plungeRate: z.number().positive(),              // 下刀速率 (mm/min)
+  retractRate: z.number().positive(),             // 退刀速率 (mm/min)
+  
+  // 切削深度参数
+  stepDown: z.number().positive(),               // Z轴每层切削深度 (mm)
+  stepOver: z.number().positive(),                // XY向步距 (mm)
+  
+  // 安全参数
+  safeHeight: z.number().nonnegative(),          // 安全高度 (mm)
+  materialZMax: z.number(),                       // 材料顶面Z坐标 (mm)
+  materialZMin: z.number(),                       // 材料底面Z坐标 (mm)
+  
+  // 加工策略
+  strategy: machiningStrategyEnum,
+  
+  // 余量参数
+  stock留给: z.number().nonnegative().optional().default(0.5),  // 预留余量 (mm)
+  
+  // 冷却
+  coolant: z.boolean().default(true),             // 是否开启冷却液
+  
+  // 容差
+  tolerance: z.number().positive().default(0.01), // 加工精度 (mm)
+});
+
+export type MachiningParams = z.infer<typeof machiningParamsSchema>;
+
+// ============ G代码生成 ============
+
+export const generateGcodeRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  params: machiningParamsSchema,
+});
+
+export type GenerateGcodeRequest = z.infer<typeof generateGcodeRequestSchema>;
+
+export const generateGcodeResponseSchema = z.object({
+  success: z.boolean(),
+  jobId: z.string(),
+  status: z.enum(["pending", "processing", "completed", "failed"]),
+  progress: z.number().min(0).max(100),
+  
+  gcodeInfo: z.object({
+    totalLines: z.number(),
+    estimatedTime: z.number(),                   // 预估加工时间 (秒)
+    materialRemoval: z.number().optional(),      // 材料去除量 (mm³)
+  }).optional(),
+  
+  error: z.string().optional(),
+});
+
+export type GenerateGcodeResponse = z.infer<typeof generateGcodeResponseSchema>;
+
+// ============ 刀路预览 ============
+
+export const pathPointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  z: z.number(),
+  type: z.enum(["rapid", "cut", "plunge", "retract", "arc"]),
+});
+
+export type PathPoint = z.infer<typeof pathPointSchema>;
+
+export const pathSegmentSchema = z.object({
+  id: z.number(),
+  type: z.enum(["rapid", "cut", "plunge", "retract", "arc"]),
+  points: z.array(pathPointSchema),
+  feedRate: z.number().optional(),
+  spindleSpeed: z.number().optional(),
+});
+
+export type PathSegment = z.infer<typeof pathSegmentSchema>;
+
+export const toolpathPreviewSchema = z.object({
+  jobId: z.string(),
+  segments: z.array(pathSegmentSchema),
+  boundingBox: z.object({
+    minX: z.number(),
+    minY: z.number(),
+    minZ: z.number(),
+    maxX: z.number(),
+    maxY: z.number(),
+    maxZ: z.number(),
+  }),
+  stats: z.object({
+    totalPoints: z.number(),
+    totalDistance: z.number(),
+    rapidDistance: z.number(),
+    cutDistance: z.number(),
+    estimatedTime: z.number(),
+  }),
+});
+
+export type ToolpathPreview = z.infer<typeof toolpathPreviewSchema>;
+
+export const getToolpathRequestSchema = z.object({
+  jobId: z.string(),
+});
+
+export type GetToolpathRequest = z.infer<typeof getToolpathRequestSchema>;
+
+// ============ G代码下载 ============
+
+export const downloadGcodeRequestSchema = z.object({
+  jobId: z.string(),
+});
+
+export type DownloadGcodeRequest = z.infer<typeof downloadGcodeRequestSchema>;
+
+export const downloadGcodeResponseSchema = z.object({
+  success: z.boolean(),
+  filename: z.string(),
+  content: z.string(),
+  contentType: z.literal("text/x-gcode"),
+});
+
+export type DownloadGcodeResponse = z.infer<typeof downloadGcodeResponseSchema>;
+
+// ============ 作业状态 ============
+
+export const jobStatusSchema = z.object({
+  jobId: z.string(),
+  status: z.enum(["pending", "processing", "completed", "failed"]),
+  progress: z.number().min(0).max(100),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  error: z.string().optional(),
+});
+
+export type JobStatus = z.infer<typeof jobStatusSchema>;
+
+// ============ 预设参数 ============
+
+export const materialPresetsSchema = z.object({
+  aluminum: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  steel: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  stainless: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  titanium: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  brass: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  plastic: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+  wood: z.object({
+    spindleSpeed: z.number(),
+    feedRate: z.number(),
+    plungeRate: z.number(),
+  }),
+});
+
+export type MaterialPresets = z.infer<typeof materialPresetsSchema>;
+
+</file_content>
+
+<file_content path='server/routes/gcode.ts'>
+import { Router } from "express";
+import { z } from "zod";
+import type { MachiningParams, GCodeResult } from "@shared/types";
+
+// 加工参数校验 schema
+export const machiningParamsSchema = z.object({
+  feedRate: z.number().min(1).max(5000).default(800), // 进给速度 mm/min
+  spindleSpeed: z.number().min(100).max(30000).default(3000), // 转速 rpm
+  cutDepth: z.number().min(0.1).max(10).default(1.0), // 切削深度 mm
+  stepOver: z.number().min(0.1).max(5).default(0.5), // 步距 mm
+  toolDiameter: z.number().min(1).max(50).default(6), // 刀具直径 mm
+  safeHeight: z.number().min(1).max(50).default(5), // 安全高度 mm
+  modelBounds: z.object({
+    minX: z.number(),
+    minY: z.number(),
+    minZ: z.number(),
+    maxX: z.number(),
+    maxY: z.number(),
+    maxZ: z.number(),
+  }),
+});
+
+export type MachiningParamsRequest = z.infer<typeof machiningParamsSchema>;
+
+const router = Router();
+
+// 生成 G 代码
+router.post("/generate", async (req, res) => {
+  try {
+    const params = machiningParamsSchema.parse(req.body);
+    const gcode = generateGCode(params);
+    const stats = calculateGCodeStats(gcode);
+
+    const result: GCodeResult = {
+      gcode,
+      stats,
+      generatedAt: new Date().toISOString(),
+    };
+
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "参数校验失败", details: error.flatten() });
+      return;
+    }
+    console.error("G-code generation error:", error);
+    res.status(500).json({ error: "G代码生成失败" });
+  }
+});
+
+// 下载 G 代码文件
+router.get("/download/:filename", async (req, res) => {
+  const { filename } = req.params;
+  const gcodeData = req.query.gcode as string;
+
+  if (!gcodeData) {
+    res.status(400).json({ error: "缺少 G代码数据" });
+    return;
+  }
+
+  const safeFilename = filename.replace(/[^a-zA-Z0-9_-]/g, "_");
+  res.setHeader("Content-Type", "text/plain");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}.nc"`);
+  res.send(gcodeData);
+});
+
+// 生成 G 代码核心算法
+function generateGCode(params: MachiningParams): string {
+  const lines: string[] = [];
+  const {
+    feedRate,
+    spindleSpeed,
+    cutDepth,
+    stepOver,
+    toolDiameter,
+    safeHeight,
+    modelBounds,
+  } = params;
+
+  // 文件头
+  lines.push("; Generated by STEP to G-Code Converter");
+  lines.push(`; Generated at: ${new Date().toISOString()}`);
+  lines.push("; Feed Rate: " + feedRate + " mm/min");
+  lines.push("; Spindle Speed: " + spindleSpeed + " rpm");
+  lines.push("; Cut Depth: " + cutDepth + " mm");
+  lines.push("; Step Over: " + stepOver + " mm");
+  lines.push("; Tool Diameter: " + toolDiameter + " mm");
+  lines.push("");
+
+  // 初始化
+  lines.push("G90 ; 绝对坐标编程");
+  lines.push("G21 ; 公制单位 (mm)");
+  lines.push("G17 ; XY 平面选择");
+  lines.push("G40 ; 取消刀具半径补偿");
+  lines.push("G49 ; 取消刀具长度补偿");
+  lines.push("G80 ; 取消固定循环");
+  lines.push("");
+
+  // 主轴启动
+  lines.push(`M3 S${spindleSpeed} ; 主轴正转，转速 ${spindleSpeed} rpm`);
+  lines.push(`G4 P3 ; 等待主轴达到目标转速`);
+  lines.push("");
+
+  // 计算层数
+  const modelHeight = modelBounds.maxZ - modelBounds.minZ;
+  const numLayers = Math.ceil(modelHeight / cutDepth);
+  
+  // 刀具补偿
+  lines.push(`G41 D1 ; 刀具半径左补偿，刀具直径 ${toolDiameter}`);
+  lines.push("");
+
+  // Z轴下刀
+  lines.push(`G0 Z${safeHeight.toFixed(3)} ; 快速移动到安全高度`);
+  lines.push(`X${modelBounds.minX.toFixed(3)} Y${modelBounds.minY.toFixed(3)} ; 移动到起点`);
+  lines.push("");
+
+  // 分层切削
+  for (let layer = 0; layer < numLayers; layer++) {
+    const currentZ = modelBounds.minZ + layer * cutDepth;
+    const nextZ = Math.min(currentZ + cutDepth, modelBounds.maxZ);
+    
+    lines.push(`; === 第 ${layer + 1}/${numLayers} 层，Z = ${currentZ.toFixed(3)} mm ===`);
+    
+    // 下刀
+    lines.push(`G1 Z${currentZ.toFixed(3)} F${(feedRate / 2).toFixed(0)} ; 慢速下刀`);
+    
+    // 螺旋下刀或斜线下刀
+    if (layer === 0) {
+      // 第一层使用螺旋下刀
+      const centerX = (modelBounds.minX + modelBounds.maxX) / 2;
+      const centerY = (modelBounds.minY + modelBounds.maxY) / 2;
+      const helixRadius = Math.min(
+        (modelBounds.maxX - modelBounds.minX) / 4,
+        (modelBounds.maxY - modelBounds.minY) / 4
+      );
+      
+      // 螺旋切削一圈
+      lines.push(`G2 I${helixRadius.toFixed(3)} J0 Z${nextZ.toFixed(3)} F${feedRate} ; 螺旋下刀`);
+    }
+    
+    // 平面内切削 - 沿着边界进行轮廓切削
+    const contour = generateContourPath(modelBounds, stepOver);
+    for (const point of contour) {
+      lines.push(`G1 X${point.x.toFixed(3)} Y${point.y.toFixed(3)} Z${currentZ.toFixed(3)} F${feedRate}`);
+    }
+    
+    // 抬刀
+    lines.push(`G0 Z${safeHeight.toFixed(3)} ; 抬刀到安全高度`);
+    lines.push("");
+  }
+
+  // 返回原点
+  lines.push("G0 Z50 ; 抬刀到换刀位置");
+  lines.push("G0 X0 Y0 ; 返回工件原点");
+  lines.push("");
+
+  // 主轴停止
+  lines.push("M5 ; 主轴停止");
+  lines.push("M30 ; 程序结束");
+  lines.push("%");
+
+  return lines.join("\n");
+}
+
+// 生成轮廓路径
+function generateContourPath(
+  bounds: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number },
+  stepOver: number
+): { x: number; y: number }[] {
+  const path: { x: number; y: number }[] = [];
+  
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxY - bounds.minY;
+  
+  // 计算偏移量（考虑刀具半径）
+  const offset = stepOver;
+  
+  // 外轮廓矩形
+  const x1 = bounds.minX + offset;
+  const y1 = bounds.minY + offset;
+  const x2 = bounds.maxX - offset;
+  const y2 = bounds.maxY - offset;
+  
+  // 简单的矩形轮廓
+  path.push({ x: x1, y: y1 });
+  path.push({ x: x2, y: y1 });
+  path.push({ x: x2, y: y2 });
+  path.push({ x: x1, y: y2 });
+  path.push({ x: x1, y: y1 }); // 闭合轮廓
+  
+  return path;
+}
+
+// 计算 G 代码统计信息
+function calculateGCodeStats(gcode: string): {
+  totalLines: number;
+  estimatedTime: number;
+  toolpathLength: number;
+} {
+  const lines = gcode.split("\n").filter((line) => line.trim() && !line.startsWith(";"));
+  
+  let moveCount = 0;
+  let totalDistance = 0;
+  
+  let currentX = 0,
+    currentY = 0,
+    currentZ = 0;
+  
+  for (const line of lines) {
+    const gMatch = line.match(/G[01]\s+X([-\d.]+)\s+Y([-\d.]+)/i);
+    const g0Match = line.match(/G0\s+X([-\d.]+)\s+Y([-\d.]+)/i);
+    const g1Match = line.match(/G1\s+X([-\d.]+)\s+Y([-\d.]+)/i);
+    
+    let newX = currentX,
+      newY = currentY;
+    
+    if (g0Match || g1Match) {
+      newX = parseFloat(gMatch?.[1] || g0Match?.[1] || g1Match?.[1] || currentX.toString());
+      newY = parseFloat(gMatch?.[2] || g0Match?.[2] || g1Match?.[2] || currentY.toString());
+      
+      const dx = newX - currentX;
+      const dy = newY - currentY;
+      totalDistance += Math.sqrt(dx * dx + dy * dy);
+      
+      currentX = newX;
+      currentY = newY;
+      moveCount++;
+    }
+    
+    // Z轴移动
+    const zMatch = line.match(/Z([-\d.]+)/i);
+    if (zMatch) {
+      const newZ = parseFloat(zMatch[1]);
+      totalDistance += Math.abs(newZ - currentZ);
+      currentZ = newZ;
+    }
+  }
+  
+  // 估算加工时间（秒）
+  const estimatedTime = (totalDistance / 800) * 60; // 假设平均进给速度 800 mm/min
+  
+  return {
+    totalLines: lines.length,
+    estimatedTime: Math.round(estimatedTime),
+    toolpathLength: Math.round(totalDistance),
+  };
+}
+
+export default router;
+
+</file_content>
+
+<file_content path='server/routes/index.ts'>
+import type { Router } from "express";
+import { registerViewRoute } from "./view";
+import gcodeRouter from "./gcode";
+
+export function registerRoutes(router: Router) {
+  // G代码生成路由
+  router.use("/api/gcode", gcodeRouter);
+
+  // HTML 页面渲染（catch-all，必须放在最后）
+  registerViewRoute(router);
+}
+
+</file_content>
+
+<file_content path='client/src/api/index.ts'>
+import { axiosForBackend } from "@lark-apaas/client-toolkit-lite";
+import type {
+  GenerateGcodeRequest,
+  GenerateGcodeResponse,
+  ToolpathPreviewResponse,
+  UploadStepResponse,
+} from "@shared/api.interface";
+
+// Upload STEP file
+export async function uploadStepFile(file: File): Promise<UploadStepResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await axiosForBackend({
+    url: "/api/step/upload",
+    method: "POST",
+    data: formData,
+    headers: {
+      "Content-Type": "multipart/form-data",
+    },
+  });
+  return response.data;
+}
+
+// Generate G-code with machining parameters
+export async function generateGcode(
+  params: GenerateGcodeRequest
+): Promise<GenerateGcodeResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: "/api/gcode/generate",
+      method: "POST",
+      data: params,
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+// Get toolpath preview data
+export async function getToolpathPreview(
+  sessionId: string
+): Promise<ToolpathPreviewResponse> {
+  try {
+    const response = await axiosForBackend({
+      url: `/api/gcode/toolpath/${sessionId}`,
+      method: "GET",
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+// Download G-code file
+export async function downloadGcodeFile(sessionId: string): Promise<Blob> {
+  const response = await axiosForBackend({
+    url: `/api/gcode/download/${sessionId}`,
+    method: "GET",
+    responseType: "blob",
+  });
+  return new Blob([response.data], { type: "text/plain" });
+}
+
+</file_content>
+
+<file_content path='client/src/pages/HomePage/components/file-upload.tsx'>
+import { useCallback, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Upload, File, X, Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface FileUploadProps {
+  onFileSelect: (file: File) => void;
+  file: File | null;
+  isProcessing: boolean;
+  error?: string | null;
+  uploadProgress?: number;
+}
+
+export function FileUpload({
+  onFileSelect,
+  file,
+  isProcessing,
+  error,
+  uploadProgress = 0,
+}: FileUploadProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const validateFile = useCallback((file: File): boolean => {
+    const validExtensions = [".step", ".stp", ".STEP", ".STP"];
+    const extension = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    
+    if (!validExtensions.includes(extension)) {
+      setValidationError("仅支持 STEP/STP 格式文件");
+      return false;
+    }
+    
+    // STEP files are typically text-based, limit size to 100MB
+    const maxSize = 100 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setValidationError("文件大小不能超过 100MB");
+      return false;
+    }
+    
+    setValidationError(null);
+    return true;
+  }, []);
+
+  const handleFile = useCallback((selectedFile: File) => {
+    if (validateFile(selectedFile)) {
+      onFileSelect(selectedFile);
+    }
+  }, [validateFile, onFileSelect]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      handleFile(droppedFile);
+    }
+  }, [handleFile]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      handleFile(selectedFile);
+    }
+  }, [handleFile]);
+
+  const clearFile = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onFileSelect(null as any);
+    setValidationError(null);
+  }, [onFileSelect]);
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="w-full">
+      <AnimatePresence mode="wait">
+        {!file ? (
+          <motion.div
+            key="dropzone"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            className={cn(
+              "relative border-2 border-dashed rounded-xl p-8 transition-all duration-200 cursor-pointer",
+              isDragging
+                ? "border-primary bg-primary/5 scale-[1.02]"
+                : "border-border hover:border-primary/50 hover:bg-muted/50",
+              validationError && "border-destructive"
+            )}
+          >
+            <input
+              type="file"
+              accept=".step,.stp,.STEP,.STP"
+              onChange={handleInputChange}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              disabled={isProcessing}
+            />
+            
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <motion.div
+                animate={isDragging ? { scale: 1.1, y: -4 } : { scale: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+                className={cn(
+                  "w-16 h-16 rounded-full flex items-center justify-center",
+                  isDragging ? "bg-primary/10" : "bg-muted"
+                )}
+              >
+                <Upload className={cn(
+                  "w-8 h-8",
+                  isDragging ? "text-primary" : "text-muted-foreground"
+                )} />
+              </motion.div>
+              
+              <div className="space-y-1">
+                <p className="text-base font-medium">
+                  {isDragging ? "释放文件以上传" : "拖拽 STEP 文件到此处"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  或点击选择文件 · 支持 .step / .stp 格式
+                </p>
+              </div>
+              
+              {validationError && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive text-sm"
+                >
+                  <AlertCircle className="w-4 h-4" />
+                  {validationError}
+                </motion.div>
+              )}
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="file-info"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="border rounded-xl p-4 bg-card"
+          >
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "w-12 h-12 rounded-lg flex items-center justify-center",
+                isProcessing ? "bg-primary/10" : "bg-success/10"
+              )}>
+                {isProcessing ? (
+                  <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                ) : (
+                  <File className="w-6 h-6 text-success" />
+                )}
+              </div>
+              
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate" title={file.name}>
+                  {file.name}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {formatFileSize(file.size)}
+                  {isProcessing && uploadProgress > 0 && (
+                    <span className="ml-2">· {uploadProgress}%</span>
+                  )}
+                </p>
+              </div>
+              
+              {!isProcessing && (
+                <button
+                  onClick={clearFile}
+                  className="p-2 rounded-lg hover:bg-muted transition-colors"
+                  title="移除文件"
+                >
+                  <X className="w-5 h-5 text-muted-foreground" />
+                </button>
+              )}
+            </div>
+            
+            {isProcessing && uploadProgress > 0 && (
+              <div className="mt-3">
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-primary rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${uploadProgress}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+              </div>
+            )}
+            
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-destructive/10"
+              >
+                <AlertCircle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+                <p className="text-sm text-destructive">{error}</p>
+              </motion.div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/HomePage/components/parameters-panel.tsx'>
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
+import { 
+  Settings2, 
+  RotateCw, 
+  Move3D, 
+  Layers, 
+  Gauge, 
+  Sword,
+  RotateCcw
+} from "lucide-react";
+
+export interface MachiningParameters {
+  feedRate: number;
+  spindleSpeed: number;
+  cuttingDepth: number;
+  stepOver: number;
+  toolDiameter: number;
+  safeHeight: number;
+  retractHeight: number;
+  coolantEnabled: boolean;
+  finishPass: boolean;
+  finishPassAllowance: number;
+}
+
+interface ParametersPanelProps {
+  parameters: MachiningParameters;
+  onChange: (params: MachiningParameters) => void;
+}
+
+const defaultParameters: MachiningParameters = {
+  feedRate: 800,
+  spindleSpeed: 3000,
+  cuttingDepth: 2.0,
+  stepOver: 0.5,
+  toolDiameter: 6.0,
+  safeHeight: 10.0,
+  retractHeight: 3.0,
+  coolantEnabled: true,
+  finishPass: true,
+  finishPassAllowance: 0.2,
+};
+
+export function ParametersPanel({ parameters, onChange }: ParametersPanelProps) {
+  const [activePreset, setActivePreset] = useState<string>("custom");
+
+  const presets = [
+    { id: "rough", name: "粗加工", params: { feedRate: 600, spindleSpeed: 2000, cuttingDepth: 3.0 } },
+    { id: "finish", name: "精加工", params: { feedRate: 1200, spindleSpeed: 4000, cuttingDepth: 0.5 } },
+    { id: "drill", name: "钻孔", params: { feedRate: 300, spindleSpeed: 1500, cuttingDepth: 5.0 } },
+  ];
+
+  const applyPreset = (presetId: string) => {
+    setActivePreset(presetId);
+    const preset = presets.find((p) => p.id === presetId);
+    if (preset) {
+      onChange({ ...parameters, ...preset.params });
+    }
+  };
+
+  const updateParam = <K extends keyof MachiningParameters>(
+    key: K,
+    value: MachiningParameters[K]
+  ) => {
+    setActivePreset("custom");
+    onChange({ ...parameters, [key]: value });
+  };
+
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-4">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Settings2 className="w-5 h-5 text-primary" />
+          加工参数
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* 预设快捷选择 */}
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            快速预设
+          </Label>
+          <div className="grid grid-cols-3 gap-2">
+            {presets.map((preset) => (
+              <button
+                key={preset.id}
+                onClick={() => applyPreset(preset.id)}
+                className={`px-3 py-2 text-sm font-medium rounded-lg border transition-all ${
+                  activePreset === preset.id
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                    : "bg-background hover:bg-accent border-border"
+                }`}
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* 主轴转速 */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RotateCw className="w-4 h-4 text-muted-foreground" />
+              <Label className="text-sm font-medium">主轴转速 (RPM)</Label>
+            </div>
+            <span className="text-lg font-mono font-semibold text-primary">
+              {parameters.spindleSpeed}
+            </span>
+          </div>
+          <Slider
+            value={[parameters.spindleSpeed]}
+            onValueChange={([v]) => updateParam("spindleSpeed", v)}
+            min={500}
+            max={12000}
+            step={100}
+            className="py-1"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>500</span>
+            <span>12000</span>
+          </div>
+        </div>
+
+        {/* 进给速度 */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Move3D className="w-4 h-4 text-muted-foreground" />
+              <Label className="text-sm font-medium">进给速度 (mm/min)</Label>
+            </div>
+            <span className="text-lg font-mono font-semibold text-primary">
+              {parameters.feedRate}
+            </span>
+          </div>
+          <Slider
+            value={[parameters.feedRate]}
+            onValueChange={([v]) => updateParam("feedRate", v)}
+            min={100}
+            max={3000}
+            step={50}
+            className="py-1"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>100</span>
+            <span>3000</span>
+          </div>
+        </div>
+
+        {/* 切削深度 */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-muted-foreground" />
+              <Label className="text-sm font-medium">切削深度 (mm)</Label>
+            </div>
+            <span className="text-lg font-mono font-semibold text-primary">
+              {parameters.cuttingDepth.toFixed(1)}
+            </span>
+          </div>
+          <Slider
+            value={[parameters.cuttingDepth]}
+            onValueChange={([v]) => updateParam("cuttingDepth", v)}
+            min={0.1}
+            max={10}
+            step={0.1}
+            className="py-1"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>0.1</span>
+            <span>10</span>
+          </div>
+        </div>
+
+        {/* 步距 */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              <Label className="text-sm font-medium">步距 (mm)</Label>
+            </div>
+            <span className="text-lg font-mono font-semibold text-primary">
+              {parameters.stepOver.toFixed(2)}
+            </span>
+          </div>
+          <Slider
+            value={[parameters.stepOver]}
+            onValueChange={([v]) => updateParam("stepOver", v)}
+            min={0.1}
+            max={2}
+            step={0.05}
+            className="py-1"
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>0.1</span>
+            <span>2.0</span>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* 刀具参数 */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Sword className="w-4 h-4 text-muted-foreground" />
+            <Label className="text-sm font-medium">刀具参数</Label>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">刀具直径 (mm)</Label>
+              <Input
+                type="number"
+                value={parameters.toolDiameter}
+                onChange={(e) => updateParam("toolDiameter", parseFloat(e.target.value) || 0)}
+                min={1}
+                max={50}
+                step={0.5}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">安全高度 (mm)</Label>
+              <Input
+                type="number"
+                value={parameters.safeHeight}
+                onChange={(e) => updateParam("safeHeight", parseFloat(e.target.value) || 0)}
+                min={1}
+                max={50}
+                step={0.5}
+                className="font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 退刀高度 */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-muted-foreground" />
+              <Label className="text-sm font-medium">退刀高度 (mm)</Label>
+            </div>
+            <span className="font-mono font-semibold">{parameters.retractHeight.toFixed(1)}</span>
+          </div>
+          <Slider
+            value={[parameters.retractHeight]}
+            onValueChange={([v]) => updateParam("retractHeight", v)}
+            min={1}
+            max={20}
+            step={0.5}
+            className="py-1"
+          />
+        </div>
+
+        <Separator />
+
+        {/* 精加工设置 */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium">精加工</Label>
+            <button
+              onClick={() => updateParam("finishPass", !parameters.finishPass)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                parameters.finishPass ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                  parameters.finishPass ? "translate-x-5" : ""
+                }`}
+              />
+            </button>
+          </div>
+
+          {parameters.finishPass && (
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">精加工余量 (mm)</Label>
+              <Input
+                type="number"
+                value={parameters.finishPassAllowance}
+                onChange={(e) => updateParam("finishPassAllowance", parseFloat(e.target.value) || 0)}
+                min={0.05}
+                max={1}
+                step={0.05}
+                className="font-mono"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 冷却液 */}
+        <div className="flex items-center justify-between">
+          <Label className="text-sm font-medium">冷却液</Label>
+          <button
+            onClick={() => updateParam("coolantEnabled", !parameters.coolantEnabled)}
+            className={`relative w-11 h-6 rounded-full transition-colors ${
+              parameters.coolantEnabled ? "bg-info" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                parameters.coolantEnabled ? "translate-x-5" : ""
+              }`}
+            />
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export { defaultParameters };
+
+</file_content>
+
+<file_content path='client/src/pages/HomePage/components/toolpath-preview.tsx'>
+"use client";
+
+import { useRef, useMemo, useEffect, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, Grid, Axes3D, Environment } from "@react-three/drei";
+import * as THREE from "three";
+
+interface ToolpathPoint {
+  x: number;
+  y: number;
+  z: number;
+  type?: "rapid" | "feed" | "plunge" | "retract";
+}
+
+interface ToolpathPreviewProps {
+  toolpath?: ToolpathPoint[];
+  modelBounds?: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  };
+  showGrid?: boolean;
+  showAxes?: boolean;
+}
+
+function ToolpathLine({ toolpath }: { toolpath: ToolpathPoint[] }) {
+  const lineRef = useRef<THREE.LineSegments>(null);
+
+  const geometry = useMemo(() => {
+    if (toolpath.length < 2) return null;
+
+    const positions: number[] = [];
+    const colors: number[] = [];
+
+    const colorMap: Record<string, [number, number, number]> = {
+      rapid: [1, 1, 0],    // 黄色 - 快进
+      feed: [0, 1, 0],     // 绿色 - 切削
+      plunge: [1, 0, 0],   // 红色 - 下刀
+      retract: [0, 0.5, 1], // 蓝色 - 退刀
+    };
+
+    for (let i = 0; i < toolpath.length - 1; i++) {
+      const p1 = toolpath[i];
+      const p2 = toolpath[i + 1];
+
+      positions.push(p1.x, p1.z, p1.y);
+      positions.push(p2.x, p2.z, p2.y);
+
+      const color = colorMap[p1.type || "feed"];
+      colors.push(...color, ...color);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+
+    return geo;
+  }, [toolpath]);
+
+  return geometry ? (
+    <lineSegments ref={lineRef} geometry={geometry}>
+      <lineBasicMaterial vertexColors transparent opacity={0.9} />
+    </lineSegments>
+  ) : null;
+}
+
+function ToolpathPoints({ toolpath }: { toolpath: ToolpathPoint[] }) {
+  const points = useMemo(() => {
+    if (toolpath.length === 0) return null;
+
+    const positions = new Float32Array(toolpath.length * 3);
+    const colors = new Float32Array(toolpath.length * 3);
+
+    const colorMap: Record<string, [number, number, number]> = {
+      rapid: [1, 1, 0],
+      feed: [0, 1, 0],
+      plunge: [1, 0, 0],
+      retract: [0, 0.5, 1],
+    };
+
+    toolpath.forEach((p, i) => {
+      positions[i * 3] = p.x;
+      positions[i * 3 + 1] = p.z;
+      positions[i * 3 + 2] = p.y;
+      const color = colorMap[p.type || "feed"];
+      colors[i * 3] = color[0];
+      colors[i * 3 + 1] = color[1];
+      colors[i * 3 + 2] = color[2];
+    });
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+
+    return geometry;
+  }, [toolpath]);
+
+  return points ? (
+    <points geometry={points}>
+      <pointsMaterial vertexColors size={2} sizeAttenuation />
+    </points>
+  ) : null;
+}
+
+function WorkpieceModel({ bounds }: { bounds: ToolpathPreviewProps["modelBounds"] }) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  const geometry = useMemo(() => {
+    if (!bounds) return null;
+
+    const { minX, maxX, minY, maxY, minZ, maxZ } = bounds;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const depth = maxZ - minZ;
+
+    const geo = new THREE.BoxGeometry(width, height, depth);
+    geo.translate(
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2
+    );
+
+    return geo;
+  }, [bounds]);
+
+  return geometry ? (
+    <mesh ref={meshRef} geometry={geometry}>
+      <meshStandardMaterial
+        color="#94a3b8"
+        transparent
+        opacity={0.15}
+        wireframe
+      />
+    </mesh>
+  ) : null;
+}
+
+function CameraController({ bounds }: { bounds: ToolpathPreviewProps["modelBounds"] }) {
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if (bounds) {
+      const { minX, maxX, minY, maxY, minZ, maxZ } = bounds;
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+
+      const size = Math.max(maxX - minX, maxY - minY, maxZ - minZ) * 1.5;
+
+      camera.position.set(centerX + size, centerZ + size * 0.8, centerY + size);
+      camera.lookAt(centerX, centerZ, centerY);
+    }
+  }, [bounds, camera]);
+
+  return null;
+}
+
+function Scene({
+  toolpath,
+  bounds,
+  showGrid,
+  showAxes,
+}: ToolpathPreviewProps) {
+  return (
+    <>
+      <CameraController bounds={bounds} />
+
+      <ambientLight intensity={0.6} />
+      <directionalLight position={[10, 10, 5]} intensity={1} castShadow />
+      <directionalLight position={[-10, -10, -5]} intensity={0.3} />
+
+      {showGrid && (
+        <Grid
+          args={[100, 100]}
+          cellSize={1}
+          cellThickness={0.5}
+          cellColor="#475569"
+          sectionSize={10}
+          sectionThickness={1}
+          sectionColor="#64748b"
+          fadeDistance={150}
+          fadeStrength={1}
+          followCamera={false}
+          infiniteGrid
+          position={[0, 0, 0]}
+        />
+      )}
+
+      {showAxes && (
+        <Axes3D args={[50]} />
+      )}
+
+      {bounds && <WorkpieceModel bounds={bounds} />}
+
+      {toolpath && toolpath.length > 1 && (
+        <>
+          <ToolpathLine toolpath={toolpath} />
+          <ToolpathPoints toolpath={toolpath} />
+        </>
+      )}
+
+      <OrbitControls
+        enableDamping
+        dampingFactor={0.05}
+        minDistance={1}
+        maxDistance={500}
+        makeDefault
+      />
+    </>
+  );
+}
+
+function Legend() {
+  const items = [
+    { color: "bg-yellow-400", label: "快进 (Rapid)" },
+    { color: "bg-green-500", label: "切削 (Feed)" },
+    { color: "bg-red-500", label: "下刀 (Plunge)" },
+    { color: "bg-sky-400", label: "退刀 (Retract)" },
+  ];
+
+  return (
+    <div className="absolute bottom-4 left-4 bg-background/90 backdrop-blur-sm border border-border rounded-lg p-3 shadow-sm">
+      <p className="text-xs font-medium text-muted-foreground mb-2">刀路类型</p>
+      <div className="space-y-1.5">
+        {items.map((item) => (
+          <div key={item.label} className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-sm ${item.color}`} />
+            <span className="text-xs">{item.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ViewControls({
+  onReset,
+  onToggleGrid,
+  onToggleAxes,
+  showGrid,
+  showAxes,
+}: {
+  onReset: () => void;
+  onToggleGrid: () => void;
+  onToggleAxes: () => void;
+  showGrid: boolean;
+  showAxes: boolean;
+}) {
+  return (
+    <div className="absolute top-4 right-4 flex flex-col gap-2">
+      <button
+        onClick={onReset}
+        className="px-3 py-1.5 text-xs font-medium bg-background/90 backdrop-blur-sm border border-border rounded-lg shadow-sm hover:bg-accent transition-colors"
+      >
+        重置视角
+      </button>
+      <button
+        onClick={onToggleGrid}
+        className={`px-3 py-1.5 text-xs font-medium border rounded-lg shadow-sm transition-colors ${
+          showGrid
+            ? "bg-primary text-primary-foreground"
+            : "bg-background/90 hover:bg-accent"
+        }`}
+      >
+        网格
+      </button>
+      <button
+        onClick={onToggleAxes}
+        className={`px-3 py-1.5 text-xs font-medium border rounded-lg shadow-sm transition-colors ${
+          showAxes
+            ? "bg-primary text-primary-foreground"
+            : "bg-background/90 hover:bg-accent"
+        }`}
+      >
+        坐标轴
+      </button>
+    </div>
+  );
+}
+
+export function ToolpathPreview({
+  toolpath = [],
+  modelBounds,
+  showGrid: initialShowGrid = true,
+  showAxes: initialShowAxes = true,
+}: ToolpathPreviewProps) {
+  const [showGrid, setShowGrid] = useState(initialShowGrid);
+  const [showAxes, setShowAxes] = useState(initialShowAxes);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleReset = () => {
+    // Trigger camera reset by forcing re-render
+    setShowGrid((prev) => {
+      setShowGrid(!prev);
+      return prev;
+    });
+  };
+
+  const hasData = toolpath.length > 0 || modelBounds;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full h-full min-h-[400px] bg-slate-900/50 rounded-xl overflow-hidden border border-border"
+    >
+      {hasData ? (
+        <>
+          <Canvas
+            camera={{ position: [50, 50, 50], fov: 45 }}
+            gl={{ antialias: true, alpha: true }}
+            dpr={[1, 2]}
+          >
+            <Scene
+              toolpath={toolpath}
+              bounds={modelBounds}
+              showGrid={showGrid}
+              showAxes={showAxes}
+            />
+          </Canvas>
+
+          <Legend />
+          <ViewControls
+            onReset={handleReset}
+            onToggleGrid={() => setShowGrid(!showGrid)}
+            onToggleAxes={() => setShowAxes(!showAxes)}
+            showGrid={showGrid}
+            showAxes={showAxes}
+          />
+
+          {toolpath.length > 0 && (
+            <div className="absolute top-4 left-4 bg-background/90 backdrop-blur-sm border border-border rounded-lg px-3 py-2 shadow-sm">
+              <div className="text-xs text-muted-foreground">
+                刀路点数: <span className="font-mono font-medium text-foreground">{toolpath.length}</span>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
+          <svg
+            className="w-16 h-16 mb-4 opacity-30"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1"
+          >
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+          <p className="text-sm">上传STEP文件后预览刀路</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/HomePage/components/gcode-viewer.tsx'>
+import { useRef, useMemo, useEffect, useState } from 'react';
+import * as THREE from 'three';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Grid, PerspectiveCamera } from '@react-three/drei';
+import { cn } from '@/lib/utils';
+
+interface GcodeViewerProps {
+  gcode: string;
+  className?: string;
+  showGrid?: boolean;
+  lineColor?: string;
+  backgroundColor?: string;
+}
+
+// 解析G代码，提取刀具路径
+function parseGcode(gcode: string): { positions: THREE.Vector3[]; rapid: boolean[] } {
+  const positions: THREE.Vector3[] = [];
+  const rapid: boolean[] = [];
+  const lines = gcode.split('\n');
+  
+  let currentPos = new THREE.Vector3(0, 0, 0);
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';')) continue;
+    
+    const isRapid = trimmed.includes('G0') || trimmed.includes('G00');
+    const xMatch = trimmed.match(/X([-+]?[0-9]*\.?[0-9]+)/);
+    const yMatch = trimmed.match(/Y([-+]?[0-9]*\.?[0-9]+)/);
+    const zMatch = trimmed.match(/Z([-+]?[0-9]*\.?[0-9]+)/);
+    
+    const newPos = currentPos.clone();
+    
+    if (xMatch) newPos.x = parseFloat(xMatch[1]);
+    if (yMatch) newPos.y = parseFloat(yMatch[1]);
+    if (zMatch) newPos.z = parseFloat(zMatch[1]);
+    
+    // 避免重复点
+    if (newPos.distanceTo(currentPos) > 0.001) {
+      positions.push(currentPos.clone());
+      rapid.push(isRapid);
+      currentPos = newPos;
+    }
+  }
+  
+  // 添加最后一点
+  if (positions.length > 0) {
+    positions.push(currentPos.clone());
+  }
+  
+  return { positions, rapid };
+}
+
+// 刀具路径线段组件
+function Toolpath({ positions, rapid, lineColor, rapidColor }: {
+  positions: THREE.Vector3[];
+  rapid: boolean[];
+  lineColor: string;
+  rapidColor: string;
+}) {
+  const lineRef = useRef<THREE.LineSegments>(null);
+  const [animationProgress, setAnimationProgress] = useState(0);
+  const [isAnimating, setIsAnimating] = useState(false);
+  
+  const { geometry, colors } = useMemo(() => {
+    const points: THREE.Vector3[] = [];
+    const lineColors: THREE.Color[] = [];
+    
+    const color1 = new THREE.Color(lineColor);
+    const color2 = new THREE.Color(rapidColor);
+    
+    for (let i = 0; i < positions.length - 1; i++) {
+      points.push(positions[i]);
+      points.push(positions[i + 1]);
+      
+      const color = rapid[i] ? color2 : color1;
+      lineColors.push(color, color);
+    }
+    
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute([
+      ...lineColors.flatMap(c => [c.r, c.g, c.b])
+    ], 3));
+    
+    return { geometry: geo, colors: lineColors };
+  }, [positions, rapid, lineColor, rapidColor]);
+  
+  useEffect(() => {
+    setAnimationProgress(0);
+    setIsAnimating(true);
+  }, [positions]);
+  
+  useFrame((_, delta) => {
+    if (isAnimating && animationProgress < 1) {
+      setAnimationProgress(prev => Math.min(prev + delta * 0.5, 1));
+    }
+  });
+  
+  const visibleCount = Math.floor(positions.length * animationProgress);
+  
+  return (
+    <lineSegments ref={lineRef} geometry={geometry}>
+      <lineBasicMaterial vertexColors transparent opacity={0.9} />
+    </lineSegments>
+  );
+}
+
+// 场景控制器
+function SceneController({ positions }: { positions: THREE.Vector3[] }) {
+  const { camera } = useThree();
+  
+  useEffect(() => {
+    if (positions.length === 0) return;
+    
+    // 计算边界框
+    const box = new THREE.Box3();
+    positions.forEach(p => box.expandByPoint(p));
+    
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    
+    // 设置相机位置
+    const distance = maxDim * 2.5;
+    camera.position.set(center.x + distance, center.y + distance * 0.8, center.z + distance);
+    camera.lookAt(center);
+  }, [positions, camera]);
+  
+  return null;
+}
+
+// 3D场景组件
+function Scene3D({ gcode, showGrid, lineColor, rapidColor }: {
+  gcode: string;
+  showGrid: boolean;
+  lineColor: string;
+  rapidColor: string;
+}) {
+  const { positions, rapid } = useMemo(() => parseGcode(gcode), [gcode]);
+  
+  return (
+    <>
+      <PerspectiveCamera makeDefault position={[100, 100, 100]} fov={50} />
+      <OrbitControls enableDamping dampingFactor={0.05} minDistance={1} maxDistance={1000} />
+      
+      <ambientLight intensity={0.6} />
+      <directionalLight position={[10, 10, 5]} intensity={0.8} />
+      <directionalLight position={[-10, -10, -5]} intensity={0.3} />
+      
+      {showGrid && (
+        <Grid
+          args={[500, 500]}
+          cellSize={10}
+          cellThickness={0.5}
+          cellColor="#6f6f6f"
+          sectionSize={50}
+          sectionThickness={1}
+          sectionColor="#3f3f3f"
+          fadeDistance={400}
+          fadeStrength={1}
+          followCamera={false}
+          infiniteGrid={true}
+        />
+      )}
+      
+      {positions.length > 0 && (
+        <Toolpath
+          positions={positions}
+          rapid={rapid}
+          lineColor={lineColor}
+          rapidColor={rapidColor}
+        />
+      )}
+      
+      <SceneController positions={positions} />
+      
+      <axesHelper args={[50]} />
+    </>
+  );
+}
+
+// 路径统计
+function PathStats({ positions, rapid }: { positions: THREE.Vector3[]; rapid: boolean[] }) {
+  const stats = useMemo(() => {
+    if (positions.length < 2) return null;
+    
+    let totalLength = 0;
+    let rapidLength = 0;
+    let cutLength = 0;
+    
+    for (let i = 0; i < positions.length - 1; i++) {
+      const segmentLength = positions[i].distanceTo(positions[i + 1]);
+      totalLength += segmentLength;
+      if (rapid[i]) {
+        rapidLength += segmentLength;
+      } else {
+        cutLength += segmentLength;
+      }
+    }
+    
+    return {
+      totalLength: totalLength.toFixed(2),
+      rapidLength: rapidLength.toFixed(2),
+      cutLength: cutLength.toFixed(2),
+      lineCount: positions.length - 1,
+      rapidCount: rapid.filter(Boolean).length,
+      cutCount: rapid.filter(r => !r).length,
+    };
+  }, [positions, rapid]);
+  
+  if (!stats) return null;
+  
+  return (
+    <div className="absolute bottom-4 left-4 bg-background/95 backdrop-blur-sm border border-border rounded-lg p-4 shadow-lg">
+      <h3 className="text-sm font-semibold mb-3 text-foreground">刀路统计</h3>
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+        <span className="text-muted-foreground">总长度</span>
+        <span className="font-mono text-foreground">{stats.totalLength} mm</span>
+        <span className="text-muted-foreground">切削长度</span>
+        <span className="font-mono text-green-600">{stats.cutLength} mm</span>
+        <span className="text-muted-foreground">快进长度</span>
+        <span className="font-mono text-amber-600">{stats.rapidLength} mm</span>
+        <span className="text-muted-foreground">线段总数</span>
+        <span className="font-mono text-foreground">{stats.lineCount}</span>
+        <span className="text-muted-foreground">切削次数</span>
+        <span className="font-mono text-green-600">{stats.cutCount}</span>
+        <span className="text-muted-foreground">快进次数</span>
+        <span className="font-mono text-amber-600">{stats.rapidCount}</span>
+      </div>
+    </div>
+  );
+}
+
+// 图例组件
+function Legend({ lineColor, rapidColor }: { lineColor: string; rapidColor: string }) {
+  return (
+    <div className="absolute top-4 right-4 bg-background/95 backdrop-blur-sm border border-border rounded-lg p-3 shadow-lg">
+      <h3 className="text-xs font-semibold mb-2 text-foreground">图例</h3>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-1 rounded" style={{ backgroundColor: lineColor }} />
+          <span className="text-xs text-muted-foreground">切削路径</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-1 rounded" style={{ backgroundColor: rapidColor }} />
+          <span className="text-xs text-muted-foreground">快速移动</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 主组件
+export function GcodeViewer({
+  gcode,
+  className,
+  showGrid = true,
+  lineColor = '#22c55e',
+  rapidColor = '#f59e0b',
+  backgroundColor = '#18181b'
+}: GcodeViewerProps) {
+  const { positions, rapid } = useMemo(() => parseGcode(gcode), [gcode]);
+  
+  return (
+    <div className={cn('relative w-full h-full min-h-[400px] rounded-lg overflow-hidden', className)}>
+      <Canvas
+        gl={{ antialias: true, alpha: false }}
+        style={{ background: backgroundColor }}
+        dpr={[1, 2]}
+      >
+        <color attach="background" args={[backgroundColor]} />
+        <Scene3D
+          gcode={gcode}
+          showGrid={showGrid}
+          lineColor={lineColor}
+          rapidColor={rapidColor}
+        />
+      </Canvas>
+      
+      <Legend lineColor={lineColor} rapidColor={rapidColor} />
+      <PathStats positions={positions} rapid={rapid} />
+      
+      {positions.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center bg-muted/50">
+          <p className="text-muted-foreground">暂无刀路数据</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default GcodeViewer;
+
+</file_content>
+
+<file_content path='client/src/pages/HomePage/HomePage.tsx'>
+import { FileUploadSection } from "./components/file-upload-section";
+import { ParametersSection } from "./components/parameters-section";
+import { PreviewSection } from "./components/preview-section";
+import { GcodeOutputSection } from "./components/gcode-output-section";
+
+export default function HomePage() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {/* Header */}
+      <header className="border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-sm sticky top-0 z-50">
+        <div className="max-w-[1600px] mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-white tracking-tight">STEP to G-Code</h1>
+                <p className="text-xs text-slate-400">CNC加工刀路生成器</p>
+              </div>
+            </div>
+            <nav className="flex items-center gap-6">
+              <a href="#upload" className="text-sm text-slate-300 hover:text-white transition-colors">上传</a>
+              <a href="#parameters" className="text-sm text-slate-300 hover:text-white transition-colors">参数</a>
+              <a href="#preview" className="text-sm text-slate-300 hover:text-white transition-colors">预览</a>
+              <a href="#output" className="text-sm text-slate-300 hover:text-white transition-colors">输出</a>
+            </nav>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-[1600px] mx-auto px-6 py-8">
+        {/* Hero Section */}
+        <section className="text-center mb-12">
+          <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
+            将 STEP 文件转换为
+            <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent"> 精密加工刀路</span>
+          </h2>
+          <p className="text-lg text-slate-400 max-w-2xl mx-auto">
+            上传您的 3D STEP 模型，配置加工参数，即可生成可导入 CNC 机床的 G-code 文件
+          </p>
+        </section>
+
+        {/* Main Grid Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Column */}
+          <div className="space-y-6">
+            <FileUploadSection />
+            <ParametersSection />
+          </div>
+          
+          {/* Right Column */}
+          <div className="space-y-6">
+            <PreviewSection />
+            <GcodeOutputSection />
+          </div>
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-700/50 mt-16">
+        <div className="max-w-[1600px] mx-auto px-6 py-6">
+          <div className="flex items-center justify-between text-sm text-slate-500">
+            <p>STEP to G-Code Generator · 精密加工刀路生成工具</p>
+            <p>支持 STEP/AP-203/AP-214 格式</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/app.tsx'>
+import { Routes, Route } from "react-router-dom";
+import { Layout } from "@/components/layout";
+import ConverterPage from "@/pages/ConverterPage/ConverterPage";
+import NotFoundPage from "@/pages/NotFoundPage/NotFoundPage";
+
+export default function App() {
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<ConverterPage />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+    </Routes>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/index.css'>
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0,0,0, .03);
+  --elevate-2: rgba(0,0,0, .08);
+
+  --background: hsl(220 13% 10%);
+  --foreground: hsl(210 17% 92%);
+  --card: hsl(220 14% 14%);
+  --card-foreground: hsl(210 17% 92%);
+  --popover: hsl(220 14% 12%);
+  --popover-foreground: hsl(210 17% 92%);
+  --primary: hsl(199 89% 48%);
+  --primary-foreground: hsl(220 13% 10%);
+  --secondary: hsl(220 14% 18%);
+  --secondary-foreground: hsl(210 17% 92%);
+  --muted: hsl(220 14% 18%);
+  --muted-foreground: hsl(215 15% 55%);
+  --accent: hsl(199 89% 48%);
+  --accent-foreground: hsl(220 13% 10%);
+  --info: hsl(199 89% 48%);
+  --info-foreground: hsl(220 13% 10%);
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --success: hsl(142 70% 45%);
+  --success-foreground: hsl(220 13% 10%);
+  --warning: hsl(38 92% 50%);
+  --warning-foreground: hsl(220 13% 10%);
+  --border: hsl(220 14% 22%);
+  --input: hsl(220 14% 18%);
+  --ring: hsl(199 89% 48%);
+  --chart-1: hsl(199 89% 48%);
+  --chart-2: hsl(142 70% 45%);
+  --chart-3: hsl(38 92% 50%);
+  --chart-4: hsl(0 72% 51%);
+  --chart-5: hsl(270 60% 60%);
+  --sidebar: hsl(220 14% 12%);
+  --sidebar-foreground: hsl(210 17% 92%);
+  --sidebar-primary: hsl(199 89% 48%);
+  --sidebar-primary-foreground: hsl(220 13% 10%);
+  --sidebar-accent: hsl(220 14% 18%);
+  --sidebar-accent-foreground: hsl(199 89% 48%);
+  --sidebar-border: hsl(220 14% 18%);
+  --sidebar-ring: hsl(199 89% 48%);
+
+  --primary-border: hsl(from hsl(199 89% 48%) h s calc(l + var(--opaque-button-border-intensity)));
+  --secondary-border: hsl(from hsl(220 14% 18%) h s calc(l + var(--opaque-button-border-intensity)));
+  --destructive-border: hsl(from hsl(0 72% 51%) h s calc(l + var(--opaque-button-border-intensity)));
+  --accent-border: hsl(from hsl(199 89% 48%) h s calc(l + var(--opaque-button-border-intensity)));
+  --muted-border: hsl(from hsl(220 14% 18%) h s calc(l + var(--opaque-button-border-intensity)));
+
+  --gcode-path: hsl(142 70% 45%);
+  --gcode-tool: hsl(199 89% 48%);
+  --gcode-rapid: hsl(38 92% 50%);
+  --gcode-feed: hsl(270 60% 60%);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Tahoma, 'PingFang SC',
+    'Microsoft Yahei', Arial, 'Hiragino Sans GB', sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Monaco', monospace;
+  --radius: 0.5rem;
+  --spacing: 0.25rem;
+
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.15);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.2);
+  --shadow-sm: 0px 4px 16px 0px hsl(0 0% 0% / 0.25), 0px 1px 2px -1px hsl(0 0% 0% / 0.3);
+  --shadow: 0px 4px 20px 0px hsl(0 0% 0% / 0.3), 0px 1px 3px -1px hsl(0 0% 0% / 0.35);
+  --shadow-md: 0px 6px 24px 0px hsl(0 0% 0% / 0.35), 0px 2px 6px -1px hsl(0 0% 0% / 0.4);
+  --shadow-lg: 0px 8px 32px 0px hsl(0 0% 0% / 0.4), 0px 4px 8px -1px hsl(0 0% 0% / 0.45);
+  --shadow-xl: 0px 12px 48px 0px hsl(0 0% 0% / 0.45), 0px 8px 12px -1px hsl(0 0% 0% / 0.5);
+  --shadow-2xl: 0px 16px 64px 0px hsl(0 0% 0% / 0.5);
+  --tracking-normal: 0em;
+
+  --glow-primary: 0 0 20px hsl(199 89% 48% / 0.3);
+  --glow-success: 0 0 20px hsl(142 70% 45% / 0.3);
+  --glow-warning: 0 0 20px hsl(38 92% 50% / 0.3);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-gcode-path: var(--gcode-path);
+  --color-gcode-tool: var(--gcode-tool);
+  --color-gcode-rapid: var(--gcode-rapid);
+  --color-gcode-feed: var(--gcode-feed);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+
+  --shadow-glow-primary: var(--glow-primary);
+  --shadow-glow-success: var(--glow-success);
+  --shadow-glow-warning: var(--glow-warning);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  ::selection {
+    background-color: hsl(199 89% 48% / 0.3);
+    color: hsl(210 17% 92%);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 15% 55%);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px hsl(199 89% 48% / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px hsl(199 89% 48% / 0.8);
+  }
+}
+
+@keyframes path-trace {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-path-trace {
+  animation: path-trace 3s linear forwards;
+}
+
+</file_content>

@@ -1,0 +1,16 @@
+{
+  "appId": "app_4jy1bs67yrxv1",
+  "conversationId": "conversation_4jy1cm9pjzepp",
+  "createdAt": "2026-04-15T13:49:52+08:00",
+  "updatedAt": "2026-04-15T14:01:16+08:00",
+  "features": [
+    "client",
+    "server"
+  ],
+  "stack": "apex",
+  "version": "0.1.38",
+  "template": "apex",
+  "archType": 1,
+  "appUrl": "https://xcnmv6snfgei.aiforce.cloud/app/app_4jy1bs67yrxv1",
+  "finalText": "STEP转G代码刀路应用已完成开发并成功部署。\n\n**应用功能概览：**\n\n1. **文件上传**：支持拖拽上传STEP/STP格式的3D模型文件\n2. **加工参数设置**：\n   - 主轴转速（500-12000 RPM）\n   - 进给速度（100-3000 mm/min）\n   - 切削深度（0.1-10 mm）\n   - 步距（0.1-2 mm）\n   - 刀具直径、安全高度、退刀高度\n   - 精加工开关和余量设置\n   - 冷却液开关\n3. **刀路预览**：2D Canvas展示XY/XZ/YZ三个视图的刀路轨迹\n4. **G代码生成**：自动生成标准CNC机床G-code文件\n5. **下载功能**：一键下载.nc格式的G代码文件\n\n**设计特点：**\n- 深色专业主题，符合工业软件风格\n- 响应式布局，适配各种屏幕\n- 刀路颜色区分：快进（黄）、切削（绿）、下刀（红）、退刀（蓝）\n- 代码语法高亮显示\n\n**预览地址**：https://xcnmv6snfgei.aiforce.cloud/app/app_4jy1bs67yrxv1\n\n关于推送到GitHub仓库，由于当前环境限制，你需要将项目文件夹 `step-to-gcode` 手动推送到指定的GitHub仓库 `https://github.com/DamienLee2017/AI_workspace.git` 的 `step-to-gcode` 二级目录下。"
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "@lark-apaas/coding-presets/lib/tsconfig/tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["./shared/*"]
+    }
+  },
+  "include": ["vite.config.ts", "server", "shared"]
+}
