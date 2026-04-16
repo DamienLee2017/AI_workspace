@@ -1,0 +1,1699 @@
+批量文件生成完成！成功 7/7 个文件。
+
+## 生成成功的文件
+
+<file_content path='client/src/pages/GcodeEditorPage/components/gcode-toolbar.tsx'>
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  FileCode, Download, Trash2, Comment, Compress, Gauge,
+  Home, Shield, Replace, Columns, Settings, Plus, X,
+  ChevronDown, ChevronUp, Copy, FileUp, Check
+} from "lucide-react";
+
+export interface GcodeOptions {
+  removeComments: boolean;
+  compressCode: boolean;
+  adjustFeedRate: boolean;
+  feedRateMultiplier: number;
+  addHomeCommand: boolean;
+  addSafetyHeight: boolean;
+  safetyHeight: number;
+  removeDuplicates: boolean;
+  batchReplaces: BatchReplace[];
+}
+
+export interface BatchReplace {
+  id: string;
+  search: string;
+  replace: string;
+  enabled: boolean;
+}
+
+interface GcodeToolbarProps {
+  options: GcodeOptions;
+  onOptionsChange: (options: GcodeOptions) => void;
+  onProcess: () => void;
+  onImport: () => void;
+  onExport: () => void;
+  onClear: () => void;
+  originalLines: number;
+  processedLines: number;
+  isProcessing: boolean;
+}
+
+export function GcodeToolbar({
+  options,
+  onOptionsChange,
+  onProcess,
+  onImport,
+  onExport,
+  onClear,
+  originalLines,
+  processedLines,
+  isProcessing
+}: GcodeToolbarProps) {
+  const [activeTab, setActiveTab] = useState("operations");
+
+  const handleToggle = (key: keyof GcodeOptions, value: boolean) => {
+    onOptionsChange({ ...options, [key]: value });
+  };
+
+  const handleNumberChange = (key: keyof GcodeOptions, value: string) => {
+    const numValue = parseFloat(value) || 0;
+    onOptionsChange({ ...options, [key]: numValue });
+  };
+
+  const addBatchReplace = () => {
+    const newReplace: BatchReplace = {
+      id: Date.now().toString(),
+      search: "",
+      replace: "",
+      enabled: true
+    };
+    onOptionsChange({ ...options, batchReplaces: [...options.batchReplaces, newReplace] });
+  };
+
+  const updateBatchReplace = (id: string, updates: Partial<BatchReplace>) => {
+    onOptionsChange({
+      ...options,
+      batchReplaces: options.batchReplaces.map(r => r.id === id ? { ...r, ...updates } : r)
+    });
+  };
+
+  const removeBatchReplace = (id: string) => {
+    onOptionsChange({
+      ...options,
+      batchReplaces: options.batchReplaces.filter(r => r.id !== id)
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Settings className="w-5 h-5 text-primary" />
+            后处理操作
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {originalLines > 0 && (
+              <div className="text-sm text-muted-foreground mr-4">
+                <span className="font-mono">{originalLines}</span> 行 →{" "}
+                <span className="font-mono text-primary">{processedLines}</span> 行
+                {processedLines > 0 && (
+                  <span className="ml-2 text-success">
+                    <Check className="w-4 h-4 inline" /> 
+                    -{Math.round((1 - processedLines / originalLines) * 100)}%
+                  </span>
+                )}
+              </div>
+            )}
+            <Button variant="outline" size="sm" onClick={onImport}>
+              <FileUp className="w-4 h-4 mr-1" />
+              导入
+            </Button>
+            <Button variant="outline" size="sm" onClick={onExport} disabled={processedLines === 0}>
+              <Download className="w-4 h-4 mr-1" />
+              导出
+            </Button>
+            <Button variant="outline" size="sm" onClick={onClear}>
+              <Trash2 className="w-4 h-4 mr-1" />
+              清空
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="operations" className="text-xs sm:text-sm">
+              <FileCode className="w-4 h-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">基础操作</span>
+            </TabsTrigger>
+            <TabsTrigger value="feedrate" className="text-xs sm:text-sm">
+              <Gauge className="w-4 h-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">进给调整</span>
+            </TabsTrigger>
+            <TabsTrigger value="advanced" className="text-xs sm:text-sm">
+              <Replace className="w-4 h-4 mr-1 sm:mr-2" />
+              <span className="hidden sm:inline">批量替换</span>
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="operations" className="space-y-4 pt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <ToggleItem
+                icon={<Comment className="w-4 h-4" />}
+                label="去除注释"
+                description="移除 (;) 和 ( ) 包裹的注释"
+                checked={options.removeComments}
+                onCheckedChange={(v) => handleToggle("removeComments", v)}
+              />
+              <ToggleItem
+                icon={<Compress className="w-4 h-4" />}
+                label="压缩代码"
+                description="合并连续空移，去除重复行"
+                checked={options.compressCode}
+                onCheckedChange={(v) => handleToggle("compressCode", v)}
+              />
+              <ToggleItem
+                icon={<Home className="w-4 h-4" />}
+                label="添加回零"
+                description="在开头和结尾添加 G28 回零指令"
+                checked={options.addHomeCommand}
+                onCheckedChange={(v) => handleToggle("addHomeCommand", v)}
+              />
+              <ToggleItem
+                icon={<Shield className="w-4 h-4" />}
+                label="添加安全高度"
+                description="在加工前抬刀到安全高度"
+                checked={options.addSafetyHeight}
+                onCheckedChange={(v) => handleToggle("addSafetyHeight", v)}
+              />
+              <ToggleItem
+                icon={<Columns className="w-4 h-4" />}
+                label="去除重复行"
+                description="移除完全相同的连续行"
+                checked={options.removeDuplicates}
+                onCheckedChange={(v) => handleToggle("removeDuplicates", v)}
+              />
+            </div>
+
+            {options.addSafetyHeight && (
+              <div className="p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-4">
+                  <Label className="text-sm whitespace-nowrap">安全高度</Label>
+                  <div className="flex items-center gap-2 flex-1">
+                    <Input
+                      type="number"
+                      value={options.safetyHeight}
+                      onChange={(e) => handleNumberChange("safetyHeight", e.target.value)}
+                      className="w-24 font-mono"
+                      step="0.5"
+                    />
+                    <span className="text-sm text-muted-foreground">mm</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <Separator />
+
+            <Button 
+              className="w-full" 
+              size="lg" 
+              onClick={onProcess}
+              disabled={originalLines === 0 || isProcessing}
+            >
+              {isProcessing ? (
+                <>处理中...</>
+              ) : (
+                <>
+                  <FileCode className="w-4 h-4 mr-2" />
+                  执行后处理
+                </>
+              )}
+            </Button>
+          </TabsContent>
+
+          <TabsContent value="feedrate" className="space-y-4 pt-4">
+            <div className="p-4 bg-muted/50 rounded-lg space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Gauge className="w-5 h-5 text-primary" />
+                  <div>
+                    <Label className="text-sm font-medium">进给速度调整</Label>
+                    <p className="text-xs text-muted-foreground">按比例缩放所有 F 值</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={options.adjustFeedRate}
+                  onCheckedChange={(v) => handleToggle("adjustFeedRate", v)}
+                />
+              </div>
+
+              {options.adjustFeedRate && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-4">
+                    <Label className="text-sm whitespace-nowrap w-16">倍率</Label>
+                    <Input
+                      type="number"
+                      value={options.feedRateMultiplier}
+                      onChange={(e) => handleNumberChange("feedRateMultiplier", e.target.value)}
+                      className="w-32 font-mono"
+                      step="0.1"
+                      min="0.1"
+                      max="10"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      ({Math.round(options.feedRateMultiplier * 100)}%)
+                    </span>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {[0.5, 0.75, 1.0, 1.25, 1.5].map((mult) => (
+                      <Button
+                        key={mult}
+                        variant={options.feedRateMultiplier === mult ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => onOptionsChange({ ...options, feedRateMultiplier: mult })}
+                      >
+                        {mult × 100}%
+                      </Button>
+                    ))}
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    示例: 当前倍率 1.25 表示 F1000 → F1250
+                  </p>
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="advanced" className="space-y-4 pt-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="font-medium">批量替换规则</h3>
+                <p className="text-xs text-muted-foreground">定义多组搜索/替换对</p>
+              </div>
+              <Button size="sm" variant="outline" onClick={addBatchReplace}>
+                <Plus className="w-4 h-4 mr-1" />
+                添加规则
+              </Button>
+            </div>
+
+            {options.batchReplaces.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Replace className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">暂无替换规则</p>
+                <p className="text-xs mt-1">点击上方按钮添加</p>
+              </div>
+            ) : (
+              <ScrollArea className="h-[300px]">
+                <div className="space-y-3 pr-4">
+                  {options.batchReplaces.map((rule, index) => (
+                    <Card key={rule.id} className="relative">
+                      <CardContent className="p-3">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-muted-foreground">
+                              规则 {index + 1}
+                            </span>
+                            <Switch
+                              size="sm"
+                              checked={rule.enabled}
+                              onCheckedChange={(v) => updateBatchReplace(rule.id, { enabled: v })}
+                            />
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => removeBatchReplace(rule.id)}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs text-muted-foreground">搜索</Label>
+                            <Input
+                              value={rule.search}
+                              onChange={(e) => updateBatchReplace(rule.id, { search: e.target.value })}
+                              placeholder="查找内容"
+                              className="h-8 font-mono text-xs"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground">替换为</Label>
+                            <Input
+                              value={rule.replace}
+                              onChange={(e) => updateBatchReplace(rule.id, { replace: e.target.value })}
+                              placeholder="替换内容"
+                              className="h-8 font-mono text-xs"
+                            />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ToggleItem({
+  icon,
+  label,
+  description,
+  checked,
+  onCheckedChange
+}: {
+  icon: React.ReactNode;
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div 
+      className={`
+        flex items-start gap-3 p-3 rounded-lg border cursor-pointer
+        transition-colors
+        ${checked 
+          ? "bg-primary/5 border-primary/20" 
+          : "bg-muted/30 border-transparent hover:bg-muted/50"
+        }
+      `}
+      onClick={() => onCheckedChange(!checked)}
+    >
+      <div className={`shrink-0 mt-0.5 ${checked ? "text-primary" : "text-muted-foreground"}`}>
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-medium ${checked ? "text-primary" : ""}`}>
+          {label}
+        </div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          {description}
+        </div>
+      </div>
+      <div className="shrink-0">
+        <div className={`
+          w-4 h-4 rounded border flex items-center justify-center
+          ${checked 
+            ? "bg-primary border-primary" 
+            : "border-muted-foreground"
+          }
+        `}>
+          {checked && <Check className="w-3 h-3 text-primary-foreground" />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GcodeEditorPage/components/gcode-editor.tsx'>
+import { useState, useCallback, useRef, useEffect } from "react";
+import { Upload, FileText, Trash2, Copy, Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
+
+interface GcodeEditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  readOnly?: boolean;
+}
+
+export function GcodeEditor({ value, onChange, readOnly = false }: GcodeEditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const [lineCount, setLineCount] = useState(1);
+  const [fileSize, setFileSize] = useState(0);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    const lines = value ? value.split("\n").length : 1;
+    setLineCount(lines);
+    setFileSize(new Blob([value]).size);
+  }, [value]);
+
+  const handleScroll = useCallback(() => {
+    if (textareaRef.current && lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const content = event.target?.result as string;
+          onChange(content);
+          setFileName(file.name);
+        };
+        reader.readAsText(file);
+      }
+    },
+    [onChange]
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const content = event.target?.result as string;
+          onChange(content);
+          setFileName(file.name);
+        };
+        reader.readAsText(file);
+      }
+    },
+    [onChange]
+  );
+
+  const handleClear = useCallback(() => {
+    onChange("");
+    setFileName(null);
+  }, [onChange]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(value);
+  }, [value]);
+
+  const handleDownload = useCallback(() => {
+    const blob = new Blob([value], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName || "output.gcode";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [value, fileName]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const start = textarea.selectionStart;
+          const end = textarea.selectionEnd;
+          const newValue =
+            value.substring(0, start) + "  " + value.substring(end);
+          onChange(newValue);
+          setTimeout(() => {
+            textarea.selectionStart = textarea.selectionEnd = start + 2;
+          }, 0);
+        }
+      }
+    },
+    [value, onChange]
+  );
+
+  const highlightCode = useCallback((code: string) => {
+    const lines = code.split("\n");
+    return lines.map((line, index) => {
+      const highlighted = line
+        .replace(
+          /^(G\d+|M\d+|T\d+|S\d+|F\d+|X[+-]?[\d.]*|Y[+-]?[\d.]*|Z[+-]?[\d.]*|I[+-]?[\d.]*|J[+-]?[\d.]*|K[+-]?[\d.]*|P[+-]?[\d.]*|R[+-]?[\d.]*|E[+-]?[\d.]*|H\d*|D\d*|N\d*)/g,
+          '<span class="text-primary font-semibold">$1</span>'
+        )
+        .replace(
+          /;\s*.*/g,
+          '<span class="text-muted-foreground italic">$&</span>'
+        )
+        .replace(
+          /\([\s\S]*?\)/g,
+          '<span class="text-muted-foreground italic">$&</span>'
+        );
+      return (
+        <div
+          key={index}
+          className={cn(
+            "px-2 py-0 leading-6 hover:bg-muted/30 transition-colors",
+            line.trim() === "" && "bg-muted/20"
+          )}
+          dangerouslySetInnerHTML={{ __html: highlighted || "&nbsp;" }}
+        />
+      );
+    });
+  }, []);
+
+  return (
+    <div className="h-full flex flex-col bg-card rounded-xl border border-border overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
+        <div className="flex items-center gap-3">
+          <FileText className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-medium">
+            {fileName || "Gcode 输入"}
+          </span>
+          {fileName && (
+            <Badge variant="secondary" className="text-xs">
+              {lineCount} 行 · {fileSize} bytes
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleCopy}
+            disabled={!value}
+            className="h-8"
+          >
+            <Copy className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDownload}
+            disabled={!value}
+            className="h-8"
+          >
+            <Download className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClear}
+            disabled={!value}
+            className="h-8"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Editor area */}
+      <div
+        className={cn(
+          "flex-1 relative overflow-hidden",
+          isDragging && "ring-2 ring-primary ring-inset"
+        )}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
+      >
+        {!value ? (
+          <label className="absolute inset-0 flex flex-col items-center justify-center cursor-pointer">
+            <input
+              type="file"
+              accept=".gcode,.nc,.ngc,.txt"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <Upload className="w-12 h-12 text-muted-foreground/50 mb-4" />
+            <span className="text-lg font-medium text-muted-foreground">
+              拖放 Gcode 文件或点击上传
+            </span>
+            <span className="text-sm text-muted-foreground/70 mt-2">
+              支持 .gcode, .nc, .ngc, .txt 格式
+            </span>
+          </label>
+        ) : (
+          <div className="flex h-full">
+            {/* Line numbers */}
+            <div
+              ref={lineNumbersRef}
+              className="w-14 shrink-0 overflow-hidden bg-muted/30 border-r border-border select-none"
+            >
+              <div className="py-3">
+                {Array.from({ length: lineCount }, (_, i) => (
+                  <div
+                    key={i}
+                    className="px-2 text-right text-xs text-muted-foreground/60 leading-6 h-6"
+                  >
+                    {i + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Code display (syntax highlighted) */}
+            <div
+              className="flex-1 overflow-auto font-mono text-sm absolute inset-0 pl-14"
+              onScroll={handleScroll}
+            >
+              <pre className="p-3 whitespace-pre-wrap break-all pointer-events-none">
+                {highlightCode(value)}
+              </pre>
+            </div>
+
+            {/* Hidden textarea for input */}
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onScroll={handleScroll}
+              readOnly={readOnly}
+              className={cn(
+                "flex-1 w-full h-full p-3 pl-14",
+                "bg-transparent font-mono text-sm",
+                "resize-none outline-none",
+                "text-transparent caret-foreground",
+                "whitespace-pre-wrap break-all"
+              )}
+              placeholder="在此输入或拖放 Gcode 文件..."
+            />
+          </div>
+        )}
+
+        {/* File upload overlay */}
+        {value && (
+          <label className="absolute bottom-3 right-3">
+            <input
+              type="file"
+              accept=".gcode,.nc,.ngc,.txt"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <Button variant="secondary" size="sm" className="shadow-md">
+              <Upload className="w-4 h-4 mr-1" />
+              替换文件
+            </Button>
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GcodeEditorPage/components/gcode-output.tsx'>
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Copy, Download, Check, FileCode } from "lucide-react";
+
+interface GcodeOutputProps {
+  code: string;
+  originalLines: number;
+  processedLines: number;
+}
+
+export function GcodeOutput({ code, originalLines, processedLines }: GcodeOutputProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (code) {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownload = () => {
+    if (code) {
+      const blob = new Blob([code], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "output.gcode";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const stats = {
+    removed: originalLines - processedLines,
+    reduction: originalLines > 0 ? ((originalLines - processedLines) / originalLines * 100).toFixed(1) : "0",
+  };
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardHeader className="flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FileCode className="w-5 h-5 text-primary" />
+            处理结果
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopy}
+              disabled={!code}
+            >
+              {copied ? (
+                <Check className="w-4 h-4 mr-1" />
+              ) : (
+                <Copy className="w-4 h-4 mr-1" />
+              )}
+              {copied ? "已复制" : "复制"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownload}
+              disabled={!code}
+            >
+              <Download className="w-4 h-4 mr-1" />
+              下载
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="flex-1 flex flex-col min-h-0 p-0">
+        {code ? (
+          <>
+            <div className="flex gap-4 px-6 pb-4 flex-shrink-0">
+              <Badge variant="outline" className="bg-muted/50">
+                原始: {originalLines} 行
+              </Badge>
+              <Badge variant="outline" className="bg-muted/50">
+                处理后: {processedLines} 行
+              </Badge>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+                减少: {stats.removed} 行 ({stats.reduction}%)
+              </Badge>
+            </div>
+
+            <ScrollArea className="flex-1 border-t">
+              <pre className="p-6 text-xs font-mono leading-relaxed overflow-x-auto">
+                <code className="text-muted-foreground">
+                  {code.split("\n").map((line, i) => (
+                    <div key={i} className="hover:bg-muted/30 px-2 py-0.5 -mx-2 rounded">
+                      <span className="text-muted-foreground/50 select-none w-10 inline-block">
+                        {String(i + 1).padStart(4, " ")}
+                      </span>
+                      <span className={
+                        line.trim().startsWith(";") ? "text-muted-foreground/60" :
+                        line.trim() === "" ? "text-muted-foreground/30" :
+                        "text-foreground"
+                      }>
+                        {line || " "}
+                      </span>
+                    </div>
+                  ))}
+                </code>
+              </pre>
+            </ScrollArea>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <FileCode className="w-12 h-12 mx-auto mb-4 opacity-30" />
+              <p className="text-sm">在左侧输入 Gcode 并选择操作</p>
+              <p className="text-xs mt-1">处理后的代码将显示在这里</p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GerberPage/components/file-upload-section.tsx'>
+import { useCallback, useState } from "react";
+import { Upload, File, X, CheckCircle, AlertCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface FileItem {
+  id: string;
+  name: string;
+  size: number;
+  type: "copper" | "mask" | "drill";
+  content: string;
+  status: "pending" | "loaded" | "error";
+  error?: string;
+}
+
+interface FileUploadSectionProps {
+  files: FileItem[];
+  onFilesChange: (files: FileItem[]) => void;
+}
+
+const fileTypeLabels = {
+  copper: "铜层 (.gtl/.gbl)",
+  mask: "阻焊层 (.gts/.gbs)",
+  drill: "钻孔 (.drl/.txt)",
+};
+
+export function FileUploadSection({ files, onFilesChange }: FileUploadSectionProps) {
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  }, []);
+
+  const parseGerberContent = (content: string, type: "copper" | "mask" | "drill"): { paths: number; apertures: number } => {
+    const apertureMatches = content.match(/%ADD\d+/g) || [];
+    const pathMatches = content.match(/X\d+Y\d+/g) || [];
+    return {
+      paths: pathMatches.length,
+      apertures: apertureMatches.length,
+    };
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    processFiles(droppedFiles);
+  }, []);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    processFiles(selectedFiles);
+  }, []);
+
+  const processFiles = (newFiles: File[]) => {
+    const fileArray: FileItem[] = [];
+
+    newFiles.forEach((file) => {
+      const ext = file.name.toLowerCase().split(".").pop() || "";
+
+      let type: "copper" | "mask" | "drill" = "copper";
+      if (ext === "gts" || ext === "gbs") type = "mask";
+      if (ext === "drl" || ext === "txt") type = "drill";
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target?.result as string;
+        const stats = parseGerberContent(content, type);
+
+        const newFile: FileItem = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          size: file.size,
+          type,
+          content,
+          status: "loaded",
+        };
+
+        const existingIndex = files.findIndex(
+          (f) => f.type === type && f.name !== file.name
+        );
+
+        if (existingIndex >= 0) {
+          const updatedFiles = [...files];
+          updatedFiles[existingIndex] = newFile;
+          onFilesChange(updatedFiles);
+        } else {
+          onFilesChange([...files.filter((f) => f.type !== type), newFile]);
+        }
+      };
+
+      reader.onerror = () => {
+        const errorFile: FileItem = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          size: file.size,
+          type,
+          content: "",
+          status: "error",
+          error: "文件读取失败",
+        };
+        onFilesChange([...files.filter((f) => f.type !== type), errorFile]);
+      };
+
+      reader.readAsText(file);
+    });
+  };
+
+  const removeFile = (id: string) => {
+    onFilesChange(files.filter((f) => f.id !== id));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const getStatusIcon = (status: "pending" | "loaded" | "error") => {
+    switch (status) {
+      case "loaded":
+        return <CheckCircle className="w-4 h-4 text-success" />;
+      case "error":
+        return <AlertCircle className="w-4 h-4 text-destructive" />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div
+        className={cn(
+          "relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200",
+          dragActive
+            ? "border-primary bg-primary/5"
+            : "border-border hover:border-primary/50 hover:bg-muted/30"
+        )}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+        <input
+          type="file"
+          accept=".gbr,.gtl,.gbl,.gts,.gbs,.drl,.txt"
+          multiple
+          onChange={handleFileSelect}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
+        <Upload className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground mb-1">
+          拖拽 Gerber 文件到此处
+        </p>
+        <p className="text-xs text-muted-foreground">
+          支持 .gbr, .gtl, .gbl, .gts, .gbs, .drl, .txt 格式
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        {(["copper", "mask", "drill"] as const).map((type) => {
+          const file = files.find((f) => f.type === type);
+          return (
+            <div
+              key={type}
+              className={cn(
+                "flex items-center gap-3 p-3 rounded-lg border transition-all",
+                file
+                  ? file.status === "loaded"
+                    ? "bg-success/5 border-success/20"
+                    : file.status === "error"
+                    ? "bg-destructive/5 border-destructive/20"
+                    : "bg-muted/50 border-border"
+                  : "bg-muted/30 border-border/50"
+              )}
+            >
+              <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                {file ? (
+                  <File className={cn(
+                    "w-5 h-5",
+                    file.status === "loaded" ? "text-success" : file.status === "error" ? "text-destructive" : "text-muted-foreground"
+                  )} />
+                ) : (
+                  <File className="w-5 h-5 text-muted-foreground/50" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {file ? file.name : fileTypeLabels[type]}
+                </p>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {file ? (
+                    <>
+                      <span>{formatFileSize(file.size)}</span>
+                      {file.status === "loaded" && (
+                        <>
+                          <span>·</span>
+                          <span>{parseGerberContent(file.content, file.type).paths} 路径</span>
+                          <span>·</span>
+                          <span>{parseGerberContent(file.content, file.type).apertures} 孔径</span>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <span>未上传</span>
+                  )}
+                </div>
+              </div>
+              {getStatusIcon(file?.status || "pending")}
+              {file && (
+                <button
+                  onClick={() => removeFile(file.id)}
+                  className="p-1.5 rounded-md hover:bg-muted transition-colors"
+                >
+                  <X className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GerberPage/components/settings-section.tsx'>
+"use client";
+
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Settings, Cog, Gauge, Ruler, Layers } from "lucide-react";
+
+interface GerberSettings {
+  // 刀具参数
+  toolDiameter: number;
+  toolAperture: number;
+  // 加工参数
+  feedRate: number;
+  plungeRate: number;
+  retractRate: number;
+  zSafe: number;
+  zPlunge: number;
+  zRetract: number;
+  // PCB参数
+  isolationWidth: number;
+  boardThickness: number;
+  // 选项
+  useAperture: boolean;
+  mergeArcs: boolean;
+  reversePath: boolean;
+  convertPadsToRects: boolean;
+}
+
+interface SettingsSectionProps {
+  value?: GerberSettings;
+  onChange?: (settings: GerberSettings) => void;
+}
+
+const defaultSettings: GerberSettings = {
+  toolDiameter: 0.2,
+  toolAperture: 0.8,
+  feedRate: 100,
+  plungeRate: 50,
+  retractRate: 200,
+  zSafe: 2,
+  zPlunge: -0.1,
+  zRetract: 1,
+  isolationWidth: 0.15,
+  boardThickness: 1.6,
+  useAperture: true,
+  mergeArcs: true,
+  reversePath: false,
+  convertPadsToRects: true,
+};
+
+export function SettingsSection({ value, onChange }: SettingsSectionProps) {
+  const settings = value || defaultSettings;
+  
+  const updateSetting = <K extends keyof GerberSettings>(
+    key: K,
+    newValue: GerberSettings[K]
+  ) => {
+    if (onChange) {
+      onChange({ ...settings, [key]: newValue });
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Settings className="w-5 h-5 text-primary" />
+          转换设置
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* 刀具参数 */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Cog className="w-4 h-4" />
+            刀具参数
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="tool-diameter" className="text-xs">刀具直径 (mm)</Label>
+              <div className="flex">
+                <Input
+                  id="tool-diameter"
+                  type="number"
+                  step="0.01"
+                  min="0.05"
+                  max="5"
+                  value={settings.toolDiameter}
+                  onChange={(e) => updateSetting("toolDiameter", parseFloat(e.target.value) || 0.2)}
+                  className="font-mono"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="tool-aperture" className="text-xs">导孔直径 (mm)</Label>
+              <Input
+                id="tool-aperture"
+                type="number"
+                step="0.01"
+                min="0.1"
+                max="10"
+                value={settings.toolAperture}
+                onChange={(e) => updateSetting("toolAperture", parseFloat(e.target.value) || 0.8)}
+                className="font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* 加工参数 */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Gauge className="w-4 h-4" />
+            加工参数
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="feed-rate" className="text-xs">切削进给 (mm/min)</Label>
+              <Input
+                id="feed-rate"
+                type="number"
+                step="1"
+                min="1"
+                max="2000"
+                value={settings.feedRate}
+                onChange={(e) => updateSetting("feedRate", parseFloat(e.target.value) || 100)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="plunge-rate" className="text-xs">下刀速度 (mm/min)</Label>
+              <Input
+                id="plunge-rate"
+                type="number"
+                step="1"
+                min="1"
+                max="500"
+                value={settings.plungeRate}
+                onChange={(e) => updateSetting("plungeRate", parseFloat(e.target.value) || 50)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="retract-rate" className="text-xs">退刀速度 (mm/min)</Label>
+              <Input
+                id="retract-rate"
+                type="number"
+                step="1"
+                min="1"
+                max="2000"
+                value={settings.retractRate}
+                onChange={(e) => updateSetting("retractRate", parseFloat(e.target.value) || 200)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="z-safe" className="text-xs">安全高度 (mm)</Label>
+              <Input
+                id="z-safe"
+                type="number"
+                step="0.1"
+                min="0.5"
+                max="10"
+                value={settings.zSafe}
+                onChange={(e) => updateSetting("zSafe", parseFloat(e.target.value) || 2)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="z-plunge" className="text-xs">下刀深度 (mm)</Label>
+              <Input
+                id="z-plunge"
+                type="number"
+                step="0.01"
+                min="-2"
+                max="0"
+                value={settings.zPlunge}
+                onChange={(e) => updateSetting("zPlunge", parseFloat(e.target.value) || -0.1)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="z-retract" className="text-xs">退刀高度 (mm)</Label>
+              <Input
+                id="z-retract"
+                type="number"
+                step="0.1"
+                min="0"
+                max="5"
+                value={settings.zRetract}
+                onChange={(e) => updateSetting("zRetract", parseFloat(e.target.value) || 1)}
+                className="font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* PCB参数 */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Layers className="w-4 h-4" />
+            PCB参数
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="isolation-width" className="text-xs">隔离宽度 (mm)</Label>
+              <Input
+                id="isolation-width"
+                type="number"
+                step="0.01"
+                min="0.05"
+                max="1"
+                value={settings.isolationWidth}
+                onChange={(e) => updateSetting("isolationWidth", parseFloat(e.target.value) || 0.15)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="board-thickness" className="text-xs">板厚 (mm)</Label>
+              <Input
+                id="board-thickness"
+                type="number"
+                step="0.1"
+                min="0.4"
+                max="3.2"
+                value={settings.boardThickness}
+                onChange={(e) => updateSetting("boardThickness", parseFloat(e.target.value) || 1.6)}
+                className="font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* 选项开关 */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Ruler className="w-4 h-4" />
+            转换选项
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="use-aperture" className="text-sm cursor-pointer">使用导孔</Label>
+                <p className="text-xs text-muted-foreground">将 Gerber 导孔转换为 CNC 钻孔指令</p>
+              </div>
+              <Switch
+                id="use-aperture"
+                checked={settings.useAperture}
+                onCheckedChange={(checked) => updateSetting("useAperture", checked)}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="merge-arcs" className="text-sm cursor-pointer">合并圆弧</Label>
+                <p className="text-xs text-muted-foreground">将连续小圆弧合并为单一指令</p>
+              </div>
+              <Switch
+                id="merge-arcs"
+                checked={settings.mergeArcs}
+                onCheckedChange={(checked) => updateSetting("mergeArcs", checked)}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="reverse-path" className="text-sm cursor-pointer">反转路径</Label>
+                <p className="text-xs text-muted-foreground">反向处理刀具路径</p>
+              </div>
+              <Switch
+                id="reverse-path"
+                checked={settings.reversePath}
+                onCheckedChange={(checked) => updateSetting("reversePath", checked)}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="convert-pads" className="text-sm cursor-pointer">焊盘转矩形</Label>
+                <p className="text-xs text-muted-foreground">将圆形焊盘转换为矩形雕刻路径</p>
+              </div>
+              <Switch
+                id="convert-pads"
+                checked={settings.convertPadsToRects}
+                onCheckedChange={(checked) => updateSetting("convertPadsToRects", checked)}
+              />
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GerberPage/components/preview-section.tsx'>
+import { useState, useCallback, useMemo } from "react";
+import { Eye, ZoomIn, ZoomOut, Move, RotateCcw, Grid3x3 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+
+interface PathData {
+  type: "line" | "arc" | "point";
+  x: number;
+  y: number;
+  x1?: number;
+  y1?: number;
+  x2?: number;
+  y2?: number;
+  cx?: number;
+  cy?: number;
+  r?: number;
+}
+
+interface GerberPreviewData {
+  width: number;
+  height: number;
+  paths: PathData[];
+  drillPoints?: { x: number; y: number; diameter: number }[];
+}
+
+export function PreviewSection() {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [showGrid, setShowGrid] = useState(true);
+  const [activeLayer, setActiveLayer] = useState<"copper" | "mask" | "drill">("copper");
+
+  const sampleData: GerberPreviewData = useMemo(() => ({
+    width: 100,
+    height: 80,
+    paths: [
+      { type: "line", x: 10, y: 10, x1: 10, y1: 10, x2: 30, y2: 10 },
+      { type: "line", x: 30, y: 10, x1: 30, y1: 10, x2: 30, y2: 30 },
+      { type: "line", x: 30, y: 30, x1: 30, y1: 30, x2: 10, y2: 30 },
+      { type: "line", x: 10, y: 30, x1: 10, y1: 30, x2: 10, y2: 10 },
+      { type: "arc", x: 50, y: 20, cx: 50, cy: 20, r: 15 },
+      { type: "line", x: 65, y: 20, x1: 65, y1: 20, x2: 85, y2: 35 },
+      { type: "line", x: 85, y: 35, x1: 85, y1: 35, x2: 65, y2: 50 },
+      { type: "arc", x: 75, y: 65, cx: 75, cy: 65, r: 10 },
+    ],
+    drillPoints: [
+      { x: 20, y: 20, diameter: 2 },
+      { x: 20, y: 60, diameter: 2 },
+      { x: 80, y: 20, diameter: 3 },
+      { x: 80, y: 60, diameter: 3 },
+      { x: 50, y: 40, diameter: 4 },
+    ],
+  }), []);
+
+  const stats = useMemo(() => ({
+    lineCount: sampleData.paths.filter(p => p.type === "line").length,
+    arcCount: sampleData.paths.filter(p => p.type === "arc").length,
+    drillCount: sampleData.drillPoints?.length || 0,
+    totalLength: 125.6,
+  }), [sampleData]);
+
+  const handleZoomIn = useCallback(() => {
+    setZoom(z => Math.min(z * 1.2, 10));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom(z => Math.max(z / 1.2, 0.1));
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, []);
+
+  const gridLines = useMemo(() => {
+    const lines = [];
+    const gridSize = 10;
+    for (let i = 0; i <= sampleData.width; i += gridSize) {
+      lines.push({ x1: i, y1: 0, x2: i, y2: sampleData.height, isVertical: true });
+    }
+    for (let i = 0; i <= sampleData.height; i += gridSize) {
+      lines.push({ x1: 0, y1: i, x2: sampleData.width, y2: i, isVertical: false });
+    }
+    return lines;
+  }, [sampleData.width, sampleData.height]);
+
+  const renderPath = (path: PathData, index: number) => {
+    const strokeWidth = 0.5 / zoom;
+    
+    if (path.type === "line" && path.x1 !== undefined && path.y1 !== undefined && path.x2 !== undefined && path.y2 !== undefined) {
+      return (
+        <line
+          key={index}
+          x1={path.x1}
+          y1={path.y1}
+          x2={path.x2}
+          y2={path.y2}
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+        />
+      );
+    }
+    
+    if (path.type === "arc" && path.cx !== undefined && path.cy !== undefined && path.r !== undefined) {
+      return (
+        <circle
+          key={index}
+          cx={path.cx}
+          cy={path.cy}
+          r={path.r}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+        />
+      );
+    }
+    
+    return null;
+  };
+
+  return (
+    <Card className="col-span-1 lg:col-span-2">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Eye className="w-5 h-5 text-primary" />
+            预览
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowGrid(!showGrid)}>
+              <Grid3x3 className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleZoomOut}>
+              <ZoomOut className="w-4 h-4" />
+            </Button>
+            <span className="text-sm text-muted-foreground min-w-[60px] text-center">
+              {Math.round(zoom * 100)}%
+            </span>
+            <Button variant="outline" size="sm" onClick={handleZoomIn}>
+              <ZoomIn className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleReset}>
+              <RotateCcw className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Tabs value={activeLayer} onValueChange={(v) => setActiveLayer(v as typeof activeLayer)}>
+          <TabsList className="mb-4">
+            <TabsTrigger value="copper">铜层</TabsTrigger>
+            <TabsTrigger value="mask">阻焊层</TabsTrigger>
+            <TabsTrigger value="drill">钻孔</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value={activeLayer}>
+            <div className="relative border border-border rounded-lg overflow-hidden bg-card overflow-x-auto">
+              <div 
+                className="relative select-none cursor-move"
+                style={{
+                  transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+                  transformOrigin: 'center center',
+                }}
+              >
+                <svg
+                  width={sampleData.width * 10}
+                  height={sampleData.height * 10}
+                  viewBox={`0 0 ${sampleData.width} ${sampleData.height}`}
+                  className="text-primary"
+                >
+                  {showGrid && gridLines.map((line, i) => (
+                    <line
+                      key={i}
+                      x1={line.x1}
+                      y1={line.y1}
+                      x2={line.x2}
+                      y2={line.y2}
+                      stroke="currentColor"
+                      strokeWidth={0.05}
+                      opacity={0.2}
+                    />
+                  ))}
+
+                  {activeLayer !== "drill" && sampleData.paths.map((path, i) => renderPath(path, i))}
+
+                  {activeLayer === "drill" && sampleData.drillPoints?.map((drill, i) => (
+                    <circle
+                      key={i}
+                      cx={drill.x}
+                      cy={drill.y}
+                      r={drill.diameter / 2}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={0.3}
+                    />
+                  ))}
+                </svg>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        <div className="flex flex-wrap gap-3 mt-4 pt-4 border-t border-border">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">直线 {stats.lineCount}</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">圆弧 {stats.arcCount}</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">钻孔 {stats.drillCount}</Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline">路径长度 {stats.totalLength.toFixed(1)} mm</Badge>
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <Badge variant="secondary">尺寸 {sampleData.width} × {sampleData.height} mm</Badge>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+</file_content>
+
+<file_content path='client/src/pages/GerberPage/components/output-section.tsx'>
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Download, Copy, CheckCheck, FileCode } from "lucide-react";
+
+interface OutputSectionProps {
+  gcode: string;
+  stats?: {
+    lineCount: number;
+    estimatedTime: number;
+    toolPathLength: number;
+  };
+}
+
+export function OutputSection({ gcode, stats }: OutputSectionProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    if (gcode) {
+      await navigator.clipboard.writeText(gcode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!gcode) return;
+    const blob = new Blob([gcode], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "output.nc";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Card className="h-full">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <FileCode className="w-5 h-5 text-primary" />
+            生成的 Gcode
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopy}
+              disabled={!gcode}
+              className="gap-1.5"
+            >
+              {copied ? (
+                <>
+                  <CheckCheck className="w-4 h-4" />
+                  已复制
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4" />
+                  复制
+                </>
+              )}
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleDownload}
+              disabled={!gcode}
+              className="gap-1.5"
+            >
+              <Download className="w-4 h-4" />
+              下载
+            </Button>
+          </div>
+        </div>
+
+        {stats && (
+          <div className="flex gap-4 pt-2 text-sm">
+            <span className="text-muted-foreground">
+              行数: <span className="font-mono text-foreground">{stats.lineCount}</span>
+            </span>
+            <span className="text-muted-foreground">
+              路径: <span className="font-mono text-foreground">{stats.toolPathLength.toFixed(1)} mm</span>
+            </span>
+            <span className="text-muted-foreground">
+              预估: <span className="font-mono text-foreground">{Math.ceil(stats.estimatedTime / 60)} min</span>
+            </span>
+          </div>
+        )}
+      </CardHeader>
+
+      <CardContent>
+        <div className="relative">
+          <pre className="h-[500px] overflow-auto rounded-lg bg-muted/50 p-4 font-mono text-xs leading-relaxed">
+            {gcode || (
+              <span className="text-muted-foreground italic">
+                等待生成 Gcode...
+              </span>
+            )}
+          </pre>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+</file_content>

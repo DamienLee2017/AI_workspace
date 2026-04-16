@@ -1,0 +1,169 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --button-outline: rgba(255,255,255, .10);
+  --badge-outline: rgba(255,255,255, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(255,255,255, .03);
+  --elevate-2: rgba(255,255,255, .08);
+
+  --background: hsl(220 20% 8%);
+  --foreground: hsl(210 20% 92%);
+  --card: hsl(220 18% 12%);
+  --card-foreground: hsl(210 20% 92%);
+  --popover: hsl(220 18% 12%);
+  --popover-foreground: hsl(210 20% 92%);
+  --primary: hsl(199 89% 50%);
+  --primary-foreground: hsl(220 20% 8%);
+  --secondary: hsl(220 15% 18%);
+  --secondary-foreground: hsl(210 20% 92%);
+  --muted: hsl(220 15% 18%);
+  --muted-foreground: hsl(215 15% 60%);
+  --accent: hsl(220 15% 22%);
+  --accent-foreground: hsl(210 20% 92%);
+  --info: hsl(199 89% 50%);
+  --info-foreground: hsl(220 20% 8%);
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --success: hsl(142 70% 45%);
+  --success-foreground: hsl(220 20% 8%);
+  --warning: hsl(32 95% 53%);
+  --warning-foreground: hsl(220 20% 8%);
+  --border: hsl(220 15% 25%);
+  --input: hsl(220 15% 20%);
+  --ring: hsl(199 89% 50%);
+  --chart-1: hsl(199 89% 50%);
+  --chart-2: hsl(142 70% 45%);
+  --chart-3: hsl(32 95% 53%);
+  --chart-4: hsl(280 65% 60%);
+  --chart-5: hsl(199 70% 40%);
+  --sidebar: hsl(220 18% 10%);
+  --sidebar-foreground: hsl(210 20% 92%);
+  --sidebar-primary: hsl(199 89% 50%);
+  --sidebar-primary-foreground: hsl(220 20% 8%);
+  --sidebar-accent: hsl(220 15% 22%);
+  --sidebar-accent-foreground: hsl(199 89% 50%);
+  --sidebar-border: hsl(220 15% 20%);
+  --sidebar-ring: hsl(199 89% 50%);
+
+  --primary-border: hsl(199 89% calc(50% + var(--opaque-button-border-intensity)));
+  --secondary-border: hsl(220 15% calc(18% + var(--opaque-button-border-intensity)));
+  --destructive-border: hsl(0 72% calc(51% + var(--opaque-button-border-intensity)));
+  --accent-border: hsl(220 15% calc(22% + var(--opaque-button-border-intensity)));
+  --muted-border: hsl(220 15% calc(18% + var(--opaque-button-border-intensity)));
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Tahoma, 'PingFang SC',
+    'Microsoft YaHei', Arial, 'Hiragino Sans GB', sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', ui-monospace, monospace;
+  --radius: 0.5rem;
+  --spacing: 0.25rem;
+
+  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.15);
+  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.15);
+  --shadow-sm: 0px 2px 12px 0px hsl(0 0% 0% / 0.2), 0px 1px 2px -1px hsl(0 0% 0% / 0.2);
+  --shadow: 0px 2px 12px 0px hsl(0 0% 0% / 0.2), 0px 1px 2px -1px hsl(0 0% 0% / 0.2);
+  --shadow-md: 0px 2px 12px 0px hsl(0 0% 0% / 0.25), 0px 2px 4px -1px hsl(0 0% 0% / 0.2);
+  --shadow-lg: 0px 2px 12px 0px hsl(0 0% 0% / 0.3), 0px 4px 6px -1px hsl(0 0% 0% / 0.2);
+  --shadow-xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.35), 0px 8px 10px -1px hsl(0 0% 0% / 0.2);
+  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.4);
+  --tracking-normal: 0em;
+
+  --cnc-primary: hsl(199 89% 50%);
+  --cnc-glow: hsl(199 89% 50% / 0.3);
+  --cnc-metal: hsl(220 10% 35%);
+  --cnc-metal-light: hsl(220 10% 45%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+
+  --color-cnc-primary: var(--cnc-primary);
+  --color-cnc-glow: var(--cnc-glow);
+  --color-cnc-metal: var(--cnc-metal);
+  --color-cnc-metal-light: var(--cnc-metal-light);
+}
+
+::selection {
+  background: hsl(199 89% 50% / 0.3);
+  color: hsl(210 20% 98%);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(220 18% 10%);
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(220 15% 25%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 15% 35%);
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+}

@@ -1,0 +1,15 @@
+{
+  "appId": "app_4jy8750b4d5kn",
+  "conversationId": "conversation_4jy87p9pj71fr",
+  "createdAt": "2026-04-16T10:23:29+08:00",
+  "updatedAt": "2026-04-16T02:42:09.427Z",
+  "features": [
+    "client",
+    "server"
+  ],
+  "stack": "apex",
+  "version": "0.1.38",
+  "template": "apex",
+  "archType": 1,
+  "appUrl": "https://xcnmv6snfgei.aiforce.cloud/app/app_4jy8750b4d5kn"
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "@lark-apaas/coding-presets/lib/tsconfig/tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./client/src/*"],
+      "@shared/*": ["./shared/*"]
+    }
+  },
+  "include": ["client/src", "shared"],
+  "exclude": ["client/src/components/ui"]
+}

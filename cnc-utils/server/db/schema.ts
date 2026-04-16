@@ -1,0 +1,1 @@
+/* 该文件通过 npm run gen:db-schema 自动生成*/
