@@ -208,36 +208,61 @@ export default function HomePage() {
   const [toolpath, setToolpath] = useState<ToolpathPoint[]>([]);
   const [gcode, setGcode] = useState<string>("");
 
-  const handleFileSelect = useCallback((selectedFile: File) => {
+  const handleFileSelect = useCallback(async (selectedFile: File) => {
     setFile(selectedFile);
     setError(null);
     setIsProcessing(true);
-    setProcessingStep("解析 STEP 文件...");
+    setProcessingStep("上传并解析 STEP 文件...");
 
-    // 模拟文件解析
-    setTimeout(() => {
-      setProcessingStep("提取几何信息...");
+    try {
+      const formData = new FormData();
+      formData.append('stepFile', selectedFile);
 
-      // 模拟从STEP文件提取的包围盒数据
-      // 实际应用中应调用后端API解析STEP文件
-      const simulatedBounds: ModelBounds = {
-        minX: 0,
-        maxX: 50 + Math.random() * 50,
-        minY: 0,
-        maxY: 30 + Math.random() * 30,
-        minZ: 0,
-        maxZ: 10 + Math.random() * 20,
+      const response = await axiosForBackend.post('/api/step/parse', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setProcessingStep(`上传中... ${percent}%`);
+          }
+        },
+      });
+
+      if (!response.data.success) {
+        throw new Error(response.data.error || '文件解析失败');
+      }
+
+      const result = response.data.data;
+      const bounds = result.geometry.bounds;
+      const realBounds: ModelBounds = {
+        minX: bounds.min.x,
+        maxX: bounds.max.x,
+        minY: bounds.min.y,
+        maxZ: bounds.max.z,
+        minY: bounds.min.y,
+        maxY: bounds.max.y,
+        minZ: bounds.min.z,
+        maxZ: bounds.max.z,
       };
 
-      setModelBounds(simulatedBounds);
-      setProcessingStep("分析模型特征...");
+      setModelBounds(realBounds);
+      
+      // 显示解析模式
+      if (response.data.simulated) {
+        setError('注意：使用模拟数据，真实 STEP 解析需要安装 Python 依赖 (meshio, trimesh)');
+      } else {
+        setProcessingStep("真实 STEP 解析成功");
+      }
 
-      // 生成模拟刀路
-      const simulatedToolpath = generateSimulatedToolpath(simulatedBounds, parameters);
+      setProcessingStep("生成加工刀路...");
+
+      // 使用真实边界生成模拟刀路（后续可替换为真实切片）
+      const simulatedToolpath = generateSimulatedToolpath(realBounds, parameters);
       setToolpath(simulatedToolpath);
       
-      // 生成G代码
-      const simulatedGcode = generateSimulatedGcode(simulatedBounds, parameters);
+      const simulatedGcode = generateSimulatedGcode(realBounds, parameters);
       setGcode(simulatedGcode);
 
       setProcessingStep("完成");
@@ -245,7 +270,34 @@ export default function HomePage() {
         setIsProcessing(false);
         setProcessingStep("");
       }, 500);
-    }, 1500);
+
+    } catch (err: any) {
+      console.error('STEP 解析错误:', err);
+      
+      // 如果 API 失败，回退到模拟模式
+      setProcessingStep("使用模拟数据回退...");
+      
+      setTimeout(() => {
+        const simulatedBounds: ModelBounds = {
+          minX: 0,
+          maxX: 50 + Math.random() * 50,
+          minY: 0,
+          maxY: 30 + Math.random() * 30,
+          minZ: 0,
+          maxZ: 10 + Math.random() * 20,
+        };
+
+        setModelBounds(simulatedBounds);
+        const simulatedToolpath = generateSimulatedToolpath(simulatedBounds, parameters);
+        setToolpath(simulatedToolpath);
+        const simulatedGcode = generateSimulatedGcode(simulatedBounds, parameters);
+        setGcode(simulatedGcode);
+        
+        setIsProcessing(false);
+        setProcessingStep("");
+        setError('API 调用失败，使用模拟数据。确保后端服务运行正常。');
+      }, 1000);
+    }
   }, [parameters]);
 
   const handleGenerate = useCallback(async () => {
