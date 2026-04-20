@@ -2,6 +2,8 @@
 
 A high-performance command‑line tool that converts 3MF (3D Manufacturing Format) files to STEP (ISO 10303) CAD format, written in C++ using the OpenCASCADE CAD kernel.
 
+**Current status**: Core conversion pipeline works; can parse extracted 3MF XML files. ZIP archive support requires libzip (see below).
+
 ## Why This Tool?
 
 - **3MF** is a modern, XML‑based mesh format widely used in 3D printing.
@@ -57,13 +59,42 @@ sudo make install   # optional, installs to /usr/local/bin
 
 The tool will read the 3MF file, reconstruct its geometry as a STEP solid, and write the result.
 
-## Limitations & Future Work
+## Current Status & Limitations
 
-- Currently, the 3MF parser is a placeholder that generates a unit cube. Real 3MF support requires full XML parsing of the `3D/3dmodel.model` file.
-- Only single‑object 3MF files are supported (no multi‑material or assemblies).
-- The conversion produces a faceted (tessellated) STEP solid, not a smooth B‑REP with analytic surfaces. This is sufficient for most CAM toolpath generation.
+### ✅ Implemented
+- Basic 3MF XML parsing (vertices and triangles)
+- Mesh‑to‑B‑REP conversion via OpenCASCADE sewing
+- STEP AP214 export
+- Command‑line interface
 
-Pull requests are welcome to add full 3MF parsing, surface reconstruction, and support for advanced features.
+### ⚠️ Known Limitations
+1. **ZIP archive support**: The tool can parse extracted 3MF XML files, but reading `.3mf` ZIP archives requires libzip.
+   - If you have a `.3mf` file, extract it first:
+     ```bash
+     unzip input.3mf -d extracted/
+     ./3mf_to_step extracted/3D/3dmodel.model output.step
+     ```
+   - To enable direct `.3mf` reading, install `libzip-dev` and rebuild.
+
+2. **XML parser**: Uses simple regex matching; may fail on complex 3MF files with namespaces, comments, or unusual formatting.
+   - Planned upgrade: integrate pugixml for robust parsing.
+
+3. **Geometry features**: Only single‑object meshes are supported (no multi‑material, colors, or assemblies).
+   - The converter creates a faceted (tessellated) STEP solid, not a smooth B‑REP with analytic surfaces.
+   - This is sufficient for most CAM toolpath generation.
+
+4. **Performance**: Sewing many small triangles can be slow for large meshes.
+   - Future work: mesh simplification, planar region detection, and NURBS surface fitting.
+
+### Roadmap
+- Integrate libzip for direct `.3mf` file reading
+- Replace regex XML parser with pugixml
+- Support for multiple objects and component transformations
+- Mesh optimization (decimation, normal repair)
+- Surface reconstruction (plane/cylinder fitting)
+- CI/CD with GitHub Actions and Docker images
+
+Pull requests are welcome!
 
 ## License
 
