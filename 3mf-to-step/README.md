@@ -53,11 +53,28 @@ sudo make install   # optional, installs to /usr/local/bin
 
 ## Usage
 
+### Direct .3mf file (requires libzip)
 ```bash
 3mf_to_step input.3mf output.step
 ```
 
+### Extracted XML file (if libzip is not available)
+```bash
+unzip input.3mf -d extracted/
+3mf_to_step extracted/3D/3dmodel.model output.step
+```
+
 The tool will read the 3MF file, reconstruct its geometry as a STEP solid, and write the result.
+
+## Testing
+
+A simple test file `test/test.3mf` is included. After building, you can run:
+
+```bash
+./build/3mf_to_step test/test.3mf output.step
+```
+
+This should produce a STEP file containing a 10×10×10 mm cube.
 
 ## Current Status & Limitations
 
@@ -68,13 +85,12 @@ The tool will read the 3MF file, reconstruct its geometry as a STEP solid, and w
 - Command‑line interface
 
 ### ⚠️ Known Limitations
-1. **ZIP archive support**: The tool can parse extracted 3MF XML files, but reading `.3mf` ZIP archives requires libzip.
-   - If you have a `.3mf` file, extract it first:
+1. **ZIP archive support**: Now implemented via libzip. Install `libzip-dev` to enable direct `.3mf` file reading.
+   - If you prefer not to install libzip, you can still extract the 3MF file manually:
      ```bash
      unzip input.3mf -d extracted/
      ./3mf_to_step extracted/3D/3dmodel.model output.step
      ```
-   - To enable direct `.3mf` reading, install `libzip-dev` and rebuild.
 
 2. **XML parser**: Uses simple regex matching; may fail on complex 3MF files with namespaces, comments, or unusual formatting.
    - Planned upgrade: integrate pugixml for robust parsing.
@@ -86,8 +102,13 @@ The tool will read the 3MF file, reconstruct its geometry as a STEP solid, and w
 4. **Performance**: Sewing many small triangles can be slow for large meshes.
    - Future work: mesh simplification, planar region detection, and NURBS surface fitting.
 
+### ✅ Completed
+- Basic 3MF XML parser (regex‑based)
+- Mesh‑to‑B‑REP conversion with OpenCASCADE
+- STEP export (AP214)
+- **libzip integration for direct `.3mf` reading**
+
 ### Roadmap
-- Integrate libzip for direct `.3mf` file reading
 - Replace regex XML parser with pugixml
 - Support for multiple objects and component transformations
 - Mesh optimization (decimation, normal repair)

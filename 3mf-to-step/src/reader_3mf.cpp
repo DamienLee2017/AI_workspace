@@ -7,6 +7,7 @@
 #include <cstring>
 #include <regex>
 #include <iostream>
+#include <zip.h>
 
 // Simple XML parsing helpers
 static std::string extract_xml_content(const std::string& xml, const std::string& start_tag, const std::string& end_tag) {
@@ -74,21 +75,35 @@ static std::string extract_model_xml(const std::string& filename) {
     
     // ZIP file signature: PK\x03\x04
     if (header[0] == 'P' && header[1] == 'K' && header[2] == 3 && header[3] == 4) {
-        // This is a ZIP-compressed 3MF file.
-        // The converter requires libzip to read ZIP archives.
-        // Please install libzip development package and rebuild:
-        //   Ubuntu/Debian: sudo apt install libzip-dev
-        //   macOS (Homebrew): brew install libzip
-        //   Windows: download from https://libzip.org/
-        //
-        // Alternatively, extract the 3MF file manually:
-        //   unzip input.3mf -d extracted/
-        //   Then run the converter on extracted/3D/3dmodel.model
-        throw std::runtime_error(
-            "ZIP archive support requires libzip.\n"
-            "Install libzip-dev and rebuild, or extract the 3MF file manually.\n"
-            "See README for detailed instructions."
-        );
+        // Use libzip to extract the model file
+        int err = 0;
+        zip_t* zip = zip_open(filename.c_str(), 0, &err);
+        if (!zip) {
+            char errbuf[256];
+            zip_error_to_str(errbuf, sizeof(errbuf), err, 0);
+            throw std::runtime_error(std::string("Failed to open ZIP archive: ") + errbuf);
+        }
+        
+        // Look for the model file (usually "3D/3dmodel.model")
+        const char* model_path = "3D/3dmodel.model";
+        zip_stat_t stat;
+        if (zip_stat(zip, model_path, 0, &stat) != 0) {
+            zip_close(zip);
+            throw std::runtime_error("Model file not found in 3MF archive");
+        }
+        
+        zip_file_t* zfile = zip_fopen(zip, model_path, 0);
+        if (!zfile) {
+            zip_close(zip);
+            throw std::runtime_error("Failed to open model file in archive");
+        }
+        
+        std::string content(stat.size, '\0');
+        zip_fread(zfile, &content[0], stat.size);
+        zip_fclose(zfile);
+        zip_close(zip);
+        
+        return content;
     }
     
     // Assume it's an XML file (already extracted)
