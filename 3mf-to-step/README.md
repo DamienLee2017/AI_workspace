@@ -60,6 +60,16 @@ docker build -t 3mf-to-step .
 docker run --rm -v $(pwd)/test:/app/test 3mf-to-step test/test.3mf output.step
 ```
 
+## Testing
+
+A test script is provided to verify the conversion with Docker:
+
+```bash
+./test.sh
+```
+
+This builds the image, runs the converter on the included test file (`test/test.3mf`), and checks that `output.step` is generated.
+
 ## Usage
 
 ### Direct .3mf file (requires libzip)
