@@ -27,12 +27,12 @@ A high-performance command‑line tool that converts 3MF (3D Manufacturing Forma
 
 ### Ubuntu/Debian
 ```bash
-sudo apt install cmake g++ libocct-foundation-dev libocct-modeling-dev libocct-ocaf-dev libzip-dev
+sudo apt install cmake g++ libocct-foundation-dev libocct-modeling-dev libocct-ocaf-dev libzip-dev libpugixml-dev
 ```
 
 ### macOS (Homebrew)
 ```bash
-brew install cmake opencascade libzip
+brew install cmake opencascade libzip pugixml
 ```
 
 ### Windows
